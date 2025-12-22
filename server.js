@@ -52,29 +52,20 @@ app.post("/criar-pix", async (req, res) => {
 
 // ================= WEBHOOK =================
 app.post("/webhook", async (req, res) => {
-  try {
-    const paymentId = req.body.data.id;
+  const paymentId = req.body.data.id;
 
-    const pagamento = await axios.get(
-      `https://api.mercadopago.com/v1/payments/${paymentId}`,
-      {
-        headers: {
-          Authorization: `Bearer ${ACCESS_TOKEN}`
-        }
+  const pagamento = await axios.get(
+    `https://api.mercadopago.com/v1/payments/${paymentId}`,
+    {
+      headers: {
+        Authorization: `Bearer ${process.env.ACCESS_TOKEN}`
       }
-    );
-
-    if (pagamento.data.status === "approved") {
-      mqttClient.publish(MQTT_TOPIC, "PAGO");
     }
+  );
 
-    res.sendStatus(200);
-  } catch (error) {
-    console.error(error.message);
-    res.sendStatus(500);
+  if (pagamento.data.status === "approved") {
+    mqttClient.publish("engeasier/pix/status", "PAGO");
   }
-});
 
-app.listen(3000, () => {
-  console.log("Servidor rodando na porta 3000");
+  res.sendStatus(200);
 });
