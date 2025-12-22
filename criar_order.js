@@ -1,8 +1,8 @@
-import axios from "axios";
+const axios = require("axios");
 
 const ACCESS_TOKEN = process.env.ACCESS_TOKEN;
 
-async function criarOrder() {
+module.exports = async (req, res) => {
   try {
     const response = await axios.post(
       "https://api.mercadopago.com/merchant_orders",
@@ -31,15 +31,21 @@ async function criarOrder() {
       }
     );
 
-    console.log("✅ Order criada com sucesso:");
-    console.log(response.data);
+    res.json({
+      success: true,
+      order_id: response.data.id,
+      data: response.data
+    });
+
   } catch (error) {
     console.error(
-      "❌ Erro ao criar Order:",
+      "Erro ao criar Order:",
       error.response?.data || error.message
     );
-  }
-}
 
-// Executa
-criarOrder();
+    res.status(500).json({
+      success: false,
+      error: "Erro ao criar order no Mercado Pago"
+    });
+  }
+};

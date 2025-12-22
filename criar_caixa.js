@@ -1,10 +1,10 @@
-import axios from "axios";
+const axios = require("axios");
 
 // ===== CONFIGURAÇÕES =====
-const ACCESS_TOKEN = process.env.ACCESS_TOKEN; // APP_USR-...
+const ACCESS_TOKEN = process.env.ACCESS_TOKEN;
 const STORE_ID = 1234567; // ID da store criada anteriormente
 
-async function criarPOS() {
+module.exports = async (req, res) => {
   try {
     const response = await axios.post(
       "https://api.mercadopago.com/pos",
@@ -18,21 +18,27 @@ async function criarPOS() {
       },
       {
         headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${ACCESS_TOKEN}`
+          Authorization: `Bearer ${ACCESS_TOKEN}`,
+          "Content-Type": "application/json"
         }
       }
     );
 
-    console.log("✅ POS criado com sucesso:");
-    console.log(response.data);
+    res.json({
+      success: true,
+      pos_id: response.data.id,
+      data: response.data
+    });
+
   } catch (error) {
     console.error(
-      "❌ Erro ao criar POS:",
+      "Erro ao criar POS:",
       error.response?.data || error.message
     );
-  }
-}
 
-// Executa
-criarPOS();
+    res.status(500).json({
+      success: false,
+      error: "Erro ao criar caixa (POS) no Mercado Pago"
+    });
+  }
+};
