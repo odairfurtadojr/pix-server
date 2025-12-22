@@ -8,12 +8,20 @@ const app = express();
 app.use(bodyParser.json());
 app.use(cors());
 
+app.post('/criar-order', require('./criar_order'));
+app.post('/criar-loja', require('./criar_loja'));
+app.post('/criar-caixa', require('./criar_caixa'));
+
+app.listen(3000, () => {
+  console.log('Servidor rodando na porta 3000');
+});
+
 // ================= MERCADO PAGO =================
 const ACCESS_TOKEN = "APP_USR-5120142283772421-121914-13f737c494b79501bc39011a982d6651-3078863238";
 
 // ================= MQTT =================
 const MQTT_BROKER = "mqtt://broker.hivemq.com";
-const MQTT_TOPIC = "engeasier/pix/status";
+const MQTT_TOPIC = "choppwesley/pix/status";
 
 const mqttClient = mqtt.connect(MQTT_BROKER);
 
@@ -64,7 +72,7 @@ app.post("/webhook", async (req, res) => {
   );
 
   if (pagamento.data.status === "approved") {
-    mqttClient.publish("engeasier/pix/status", "PAGO");
+    mqttClient.publish("choppwesley/pix/status", "PAGO");
   }
 
   res.sendStatus(200);
