@@ -1,5 +1,4 @@
-require("dotenv").config();
-
+const ACCESS_TOKEN = process.env.ACCESS_TOKEN;
 const express = require("express");
 const axios = require("axios");
 const mqtt = require("mqtt");
