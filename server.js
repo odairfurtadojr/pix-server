@@ -69,48 +69,46 @@ app.post("/criar-pix", async (req, res) => {
 });
 
 // ================= WEBHOOK MERCADO PAGO =================
+// ================= WEBHOOK MERCADO PAGO =================
 app.post("/webhook", async (req, res) => {
-  // RESPONDE IMEDIATO PARA O MERCADO PAGO
+  // ⚠️ RESPONDE IMEDIATO PARA O MERCADO PAGO
   res.sendStatus(200);
 
   try {
     console.log("Webhook recebido:");
     console.log(JSON.stringify(req.body, null, 2));
 
-    // Validação básica
-    if (!req.body || !req.body.data || !req.body.data.id) {
-      console.log("Webhook ignorado: payload inválido");
+    // Só processa orders
+    if (req.body.action !== "order.processed") {
+      console.log("Evento ignorado:", req.body.action);
       return;
     }
 
-    const paymentId = req.body.data.id;
+    const payments = req.body.data?.transactions?.payments;
 
-    // Consulta pagamento
-    const pagamento = await axios.get(
-      `https://api.mercadopago.com/v1/payments/${paymentId}`,
-      {
-        headers: {
-          Authorization: `Bearer ${ACCESS_TOKEN}`
-        }
-      }
-    );
+    if (!payments || payments.length === 0) {
+      console.log("Order sem pagamentos");
+      return;
+    }
 
-    const status = pagamento.data.status;
-    const statusDetail = pagamento.data.status_detail;
+    const payment = payments[0];
 
-    console.log(`Pagamento ${paymentId} → ${status} (${statusDetail})`);
+    if (
+      payment.status === "processed" &&
+      payment.status_detail === "accredited"
+    ) {
+      console.log("✅ PAGAMENTO CONFIRMADO");
 
-    // PIX confirmado
-    if (status === "approved" || statusDetail === "accredited") {
       if (mqttClient.connected) {
-        mqttClient.publish(MQTT_TOPIC, "PAGO");
-        console.log("Status PAGO enviado via MQTT");
+        mqttClient.publish("choppwesley/pix/status", "PAGO");
+        console.log("📡 MQTT publicado: PAGO");
       } else {
-        console.log("MQTT não conectado, não foi possível publicar");
+        console.log("⚠️ MQTT não conectado");
       }
     }
 
   } catch (error) {
-    console.error("Erro no processamento do webhook:", error.response?.data || error.message);
+    console.error("Erro no processamento do webhook:", error.message);
   }
 });
+
