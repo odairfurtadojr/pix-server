@@ -1,127 +1,53 @@
+// ================= IMPORTS =================
 const express = require("express");
 const axios = require("axios");
 const mqtt = require("mqtt");
 const cors = require("cors");
+const { v4: uuidv4 } = require("uuid");
 
+// ================= APP =================
 const app = express();
-
-// ================= MIDDLEWARE =================
 app.use(cors());
 app.use(express.json());
 
-// ================= CONFIGURAÇÕES =================
+// ================= CONFIG =================
 const PORT = process.env.PORT || 3000;
 const ACCESS_TOKEN = process.env.ACCESS_TOKEN;
 
-// 🔥 POS (CAIXA) FIXO JÁ CRIADO
-const EXTERNAL_POS_ID = "LOJ001POS001"; // <-- ajuste para o seu
-
-// 🔥 VALOR FIXO DO PRODUTO
+// ---- Mercado Pago ----
+const MP_USER_ID = "3078863238";
+const STORE_ID = 72503661;
+const EXTERNAL_STORE_ID = "LOJATESTE";
+const EXTERNAL_POS_ID = "LOJ001POS001";
 const VALOR_FIXO = "30.00";
+
+// ---- Controle de estado ----
+let ordemAtiva = null;
 
 // ================= MQTT =================
 const MQTT_BROKER = "mqtt://broker.hivemq.com";
-const MQTT_TOPIC = "choppwesley/pix/status";
+const MQTT_STATUS_TOPIC = "choppwesley/pix/status";
+const MQTT_BOTAO_TOPIC = "choppwesley/pix/botao";
 
 const mqttClient = mqtt.connect(MQTT_BROKER);
 
 mqttClient.on("connect", () => {
-  console.log("MQTT conectado");
+  console.log("✅ MQTT conectado");
+  mqttClient.subscribe(MQTT_BOTAO_TOPIC);
 });
 
-mqttClient.on("error", (err) => {
-  console.error("Erro MQTT:", err.message);
+mqttClient.on("error", err => {
+  console.error("❌ Erro MQTT:", err.message);
 });
 
-// ================= ROTA PRINCIPAL =================
-// 👉 GERA ORDER PARA QR ESTÁTICO (PIX DINÂMICO REMOVIDO)
-
-app.get("/qr-pdv", async (req, res) => {
-  try {
-    const POS_ID = 1234567; // ID numérico do POS
-
-    const response = await axios.get(
-      `https://api.mercadopago.com/pos/${POS_ID}`,
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.ACCESS_TOKEN}`
-        }
-      }
-    );
-
-    res.json({
-      success: true,
-      pos_id: response.data.id,
-      qr_image: response.data.qr?.image,
-      qr_template: response.data.qr?.template_document
-    });
-
-  } catch (error) {
-    console.error("Erro ao buscar QR do PDV:", error.response?.data || error.message);
-    res.status(500).json({ error: "Erro ao buscar QR do PDV" });
-  }
-});
-
-// ================= WEBHOOK MERCADO PAGO =================
-app.post("/webhook", async (req, res) => {
-  // RESPONDE IMEDIATO
-  res.sendStatus(200);
-
-  try {
-    console.log("Webhook recebido:");
-    console.log(JSON.stringify(req.body, null, 2));
-
-    // Processa apenas orders
-    if (req.body.action !== "order.processed") {
-      console.log("Evento ignorado:", req.body.action);
-      return;
-    }
-
-    const payments = req.body.data?.transactions?.payments;
-
-    if (!payments || payments.length === 0) {
-      console.log("Order sem pagamentos");
-      return;
-    }
-
-    const payment = payments[0];
-
-    if (
-      payment.status === "processed" &&
-      payment.status_detail === "accredited"
-    ) {
-      console.log("✅ PAGAMENTO CONFIRMADO");
-
-      if (mqttClient.connected) {
-        mqttClient.publish(MQTT_TOPIC, "PAGO");
-        console.log("📡 MQTT publicado: PAGO");
-      } else {
-        console.log("⚠️ MQTT não conectado");
-      }
-    }
-
-  } catch (error) {
-    console.error(
-      "Erro no processamento do webhook:",
-      error.message
-    );
-  }
-});
-
-// ================= START SERVIDOR =================
-app.listen(PORT, () => {
-  console.log(`Servidor rodando na porta ${PORT}`);
-});
-
-//==================CRIAR LOJA======================
-
+// ================= FUNÇÃO: CRIAR LOJA =================
 async function criarLoja() {
   try {
     const response = await axios.post(
-      `https://api.mercadopago.com/users/3078863238/stores`,
+      `https://api.mercadopago.com/users/${MP_USER_ID}/stores`,
       {
         name: "Loja Teste",
-        external_id: "LOJATESTE",
+        external_id: EXTERNAL_STORE_ID,
         location: {
           street_number: "0123",
           street_name: "Nome da rua de exemplo.",
@@ -134,32 +60,23 @@ async function criarLoja() {
       },
       {
         headers: {
-          Authorization: `Bearer ${process.env.ACCESS_TOKEN}`,
+          Authorization: `Bearer ${ACCESS_TOKEN}`,
           "Content-Type": "application/json"
         }
       }
     );
 
-    console.log("✅ Loja criada com sucesso");
+    console.log("✅ Loja criada");
 
-    return {
-      id: response.data.id,
-      name: response.data.name,
-      external_id: response.data.external_id,
-      location: response.data.location
-    };
+    return response.data;
 
-  } catch (error) {
-    console.error(
-      "❌ Erro ao criar loja:",
-      error.response?.data || error.message
-    );
-    throw new Error("Falha ao criar loja no Mercado Pago");
+  } catch (err) {
+    console.error("❌ Erro criar loja:", err.response?.data || err.message);
+    throw err;
   }
 }
 
-//================CRIAR PDV==========================
-
+// ================= FUNÇÃO: CRIAR PDV =================
 async function criarPDV() {
   try {
     const response = await axios.post(
@@ -167,49 +84,33 @@ async function criarPDV() {
       {
         name: "PDV Teste",
         fixed_amount: true,
-        store_id: 72503661,
-        external_store_id: "LOJATESTE",
-        external_id: "LOJ001POS001"
+        store_id: STORE_ID,
+        external_store_id: EXTERNAL_STORE_ID,
+        external_id: EXTERNAL_POS_ID
       },
       {
         headers: {
-          Authorization: `Bearer ${process.env.ACCESS_TOKEN}`,
+          Authorization: `Bearer ${ACCESS_TOKEN}`,
           "Content-Type": "application/json"
         }
       }
     );
 
-    console.log("✅ PDV criado com sucesso");
+    console.log("✅ PDV criado");
 
-    return {
-      id: response.data.id,
-      name: response.data.name,
-      status: response.data.status,
-      store_id: response.data.store_id,
-      external_id: response.data.external_id,
-      qr: {
-        image: response.data.qr?.image,
-        template_image: response.data.qr?.template_image,
-        template_document: response.data.qr?.template_document,
-        qr_code: response.data.qr_code
-      }
-    };
+    return response.data;
 
-  } catch (error) {
-    console.error(
-      "❌ Erro ao criar PDV:",
-      error.response?.data || error.message
-    );
-    throw new Error("Falha ao criar PDV no Mercado Pago");
+  } catch (err) {
+    console.error("❌ Erro criar PDV:", err.response?.data || err.message);
+    throw err;
   }
 }
 
-//===============CRIAR ORDEM==========================
+// ================= FUNÇÃO: GERAR ORDEM =================
+async function gerarOrdemPagamento(valor) {
+  const externalReference = uuidv4();
 
-async function gerarOrdemPagamento(valor = "10.00") {
   try {
-    const externalReference = uuidv4();
-
     const response = await axios.post(
       "https://api.mercadopago.com/v1/orders",
       {
@@ -219,62 +120,106 @@ async function gerarOrdemPagamento(valor = "10.00") {
         external_reference: externalReference,
         config: {
           qr: {
-            external_pos_id: "LOJ001POS001",
+            external_pos_id: EXTERNAL_POS_ID,
             mode: "static"
           }
         },
         transactions: {
-          payments: [
-            {
-              amount: valor
-            }
-          ]
+          payments: [{ amount: valor }]
         }
       },
       {
         headers: {
-          Authorization: `Bearer ${process.env.ACCESS_TOKEN}`,
+          Authorization: `Bearer ${ACCESS_TOKEN}`,
           "Content-Type": "application/json"
         }
       }
     );
 
-    console.log("✅ Ordem de pagamento criada");
+    console.log("🧾 Ordem criada:", response.data.id);
+    return response.data;
 
-    return {
-      order_id: response.data.id,
-      status: response.data.status,
-      status_detail: response.data.status_detail,
-      total_amount: response.data.total_amount,
-      external_reference: response.data.external_reference,
-      payment_id: response.data.transactions?.payments?.[0]?.id
-    };
-
-  } catch (error) {
-    console.error(
-      "❌ Erro ao criar ordem de pagamento:",
-      error.response?.data || error.message
-    );
-    throw new Error("Falha ao criar ordem de pagamento no Mercado Pago");
+  } catch (err) {
+    console.error("❌ Erro gerar ordem:", err.response?.data || err.message);
+    throw err;
   }
 }
 
-//=============== LEITURA DO BOTÃO ===================
+// ================= MQTT: BOTÃO =================
+mqttClient.on("message", async (topic, message) => {
+  const payload = message.toString();
 
-mqttClient.subscribe("choppwesley/pix/botao", (err) => {
-  if (err) {
-    console.error("❌ Erro ao se inscrever no botão:", err);
-  } else {
-    console.log("📡 Inscrito em choppwesley/pix/botao");
+  if (topic === MQTT_BOTAO_TOPIC && payload === "pressionado") {
+    console.log("🟢 Botão pressionado");
+
+    if (ordemAtiva) {
+      console.log("⚠️ Ordem já ativa, ignorando clique");
+      return;
+    }
+
+    try {
+      const ordem = await gerarOrdemPagamento(VALOR_FIXO);
+
+      ordemAtiva = {
+        order_id: ordem.id,
+        external_reference: ordem.external_reference
+      };
+
+      mqttClient.publish(MQTT_STATUS_TOPIC, "AGUARDANDO_PAGAMENTO");
+
+    } catch (err) {
+      console.error("Erro ao criar ordem:", err.message);
+    }
   }
 });
 
-mqttClient.on("message", (topic, message) => {
-  const payload = message.toString();
-  console.log(`📥 ${topic} → ${payload}`);
+// ================= WEBHOOK MERCADO PAGO =================
+app.post("/webhook", async (req, res) => {
+  res.sendStatus(200);
 
-  if (topic === "choppwesley/pix/botao" && payload === "pressionado") {
-    console.log("🚨 Botão do PIX pressionado!");
-    // 👉 aqui você dispara sua lógica
+  try {
+    if (req.body.action !== "order.processed") return;
+
+    const payments = req.body.data?.transactions?.payments;
+    if (!payments?.length) return;
+
+    const payment = payments[0];
+
+    if (
+      payment.status === "processed" &&
+      payment.status_detail === "accredited"
+    ) {
+      console.log("✅ PAGAMENTO CONFIRMADO");
+
+      ordemAtiva = null;
+      mqttClient.publish(MQTT_STATUS_TOPIC, "PAGO");
+    }
+
+  } catch (err) {
+    console.error("Erro webhook:", err.message);
   }
+});
+
+// ================= ROTAS AUXILIARES =================
+app.post("/criar-loja", async (req, res) => {
+  try {
+    const loja = await criarLoja();
+    res.json(loja);
+  } catch {
+    res.status(500).json({ error: "Erro criar loja" });
+  }
+});
+
+app.post("/criar-pdv", async (req, res) => {
+  try {
+    const pdv = await criarPDV();
+    res.json(pdv);
+  } catch {
+    res.status(500).json({ error: "Erro criar PDV" });
+  }
+});
+
+// ================= START =================
+app.listen(PORT, () => {
+  console.log(`🚀 Servidor rodando na porta ${PORT}`);
 });
