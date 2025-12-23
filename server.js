@@ -21,8 +21,8 @@ const MP_USER_ID = "3078863238";
 const STORE_ID = 72503661;
 const EXTERNAL_STORE_ID = "LOJATESTE";
 
-// PDV
-const POS_ID = "123256613";
+// PDV (ID NUMÉRICO REAL)
+const POS_ID = 123256613;
 const EXTERNAL_POS_ID = "LOJ001POS001";
 
 // Produto
@@ -124,7 +124,7 @@ async function gerarOrdemPagamento(valor) {
       headers: {
         Authorization: `Bearer ${ACCESS_TOKEN}`,
         "Content-Type": "application/json",
-        "X-Idempotency-Key": idempotencyKey // 🔥 OBRIGATÓRIO
+        "X-Idempotency-Key": idempotencyKey
       }
     }
   );
@@ -133,42 +133,30 @@ async function gerarOrdemPagamento(valor) {
   return response.data;
 }
 
-//================== BUSCAR QR CODE ==============
-
-async function buscarQrPDV(POS_ID) {
-  try {
-    const response = await axios.get(
-      `https://api.mercadopago.com/pos/${POS_ID}`,
-      {
-        headers: {
-          Authorization: `Bearer ${ACCESS_TOKEN}`
-        }
+// ================= FUNÇÃO: BUSCAR QR DO PDV =================
+async function buscarQrPDV() {
+  const response = await axios.get(
+    `https://api.mercadopago.com/pos/${POS_ID}`,
+    {
+      headers: {
+        Authorization: `Bearer ${ACCESS_TOKEN}`
       }
-    );
+    }
+  );
 
-    return {
-      pos_id: response.data.id,
-      name: response.data.name,
-      status: response.data.status,
-
-      qr: {
-        image: response.data.qr?.image,
-        template_image: response.data.qr?.template_image,
-        template_document: response.data.qr?.template_document
-      },
-
-      external_id: response.data.external_id,
-      store_id: response.data.store_id,
-      external_store_id: response.data.external_store_id
-    };
-
-  } catch (error) {
-    console.error(
-      "❌ Erro ao buscar QR do PDV:",
-      error.response?.data || error.message
-    );
-    throw new Error("Falha ao buscar QR do PDV no Mercado Pago");
-  }
+  return {
+    pos_id: response.data.id,
+    name: response.data.name,
+    status: response.data.status,
+    qr: {
+      image: response.data.qr?.image,
+      template_image: response.data.qr?.template_image,
+      template_document: response.data.qr?.template_document
+    },
+    external_id: response.data.external_id,
+    store_id: response.data.store_id,
+    external_store_id: response.data.external_store_id
+  };
 }
 
 // ================= MQTT: BOTÃO =================
@@ -184,7 +172,6 @@ mqttClient.on("message", async (topic, message) => {
     }
 
     try {
-      // ✅ 1. CRIA A ORDEM (ESSENCIAL)
       const ordem = await gerarOrdemPagamento(VALOR_FIXO);
 
       ordemAtiva = {
@@ -192,17 +179,7 @@ mqttClient.on("message", async (topic, message) => {
         external_reference: ordem.external_reference
       };
 
-      console.log("🧾 Ordem criada:", ordem.id);
-
       mqttClient.publish(MQTT_STATUS_TOPIC, "AGUARDANDO_PAGAMENTO");
-
-      // ⚠️ 2. BUSCA QR (OPCIONAL / VISUAL)
-      try {
-        const qrPDV = await buscarQrPDV();
-        console.log("📸 QR CODE (image):", qrPDV.qr.image);
-      } catch (qrError) {
-        console.warn("⚠️ QR não disponível (visual apenas)");
-      }
 
     } catch (err) {
       console.error(
@@ -212,7 +189,6 @@ mqttClient.on("message", async (topic, message) => {
     }
   }
 });
-
 
 // ================= WEBHOOK MERCADO PAGO =================
 app.post("/webhook", async (req, res) => {
@@ -264,3 +240,16 @@ app.post("/criar-pdv", async (req, res) => {
 app.listen(PORT, () => {
   console.log(`🚀 Servidor PIX rodando na porta ${PORT}`);
 });
+
+// ================= LOG QR NO BOOT (PARA TESTE) =================
+(async () => {
+  try {
+    const qr = await buscarQrPDV();
+    console.log("📸 QR CODE DO PDV (BOOT):", qr.qr.image);
+  } catch (err) {
+    console.error(
+      "❌ Não foi possível buscar o QR no boot:",
+      err.response?.data || err.message
+    );
+  }
+})();
