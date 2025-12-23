@@ -184,6 +184,8 @@ mqttClient.on("message", async (topic, message) => {
 
     try {
       const ordem = await gerarOrdemPagamento(VALOR_FIXO);
+      const qrPDV = await buscarQrPDV();
+      console.log("📸 QR CODE (image):", qrPDV.qr.image);
 
       ordemAtiva = {
         order_id: ordem.id,
