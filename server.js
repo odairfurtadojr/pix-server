@@ -114,10 +114,24 @@ app.listen(PORT, () => {
 });
 
 //=============== LEITURA DO BOTÃO===================
-client.subscribe("choppwesley/pix/botao");
+client.on("connect", () => {
+  console.log("✅ Conectado ao broker MQTT");
+
+  client.subscribe("choppwesley/pix/botao", (err) => {
+    if (err) {
+      console.error("❌ Erro ao se inscrever:", err);
+    } else {
+      console.log("📡 Inscrito em choppwesley/pix/botao");
+    }
+  });
+});
 
 client.on("message", (topic, message) => {
-  if (topic === "choppwesley/pix/botao") {
-    console.log("🟢 Botão apertado!");
+  const payload = message.toString();
+  console.log(`📥 ${topic} → ${payload}`);
+
+  if (topic === "choppwesley/pix/botao" && payload === "pressionado") {
+    console.log("🚨 Botão do PIX pressionado!");
+    // aqui entra sua lógica do PIX
   }
 });
