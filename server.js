@@ -166,18 +166,18 @@ mqttClient.on("message", async (topic, message) => {
   if (topic === MQTT_BOTAO_TOPIC && payload === "pressionado") {
     console.log("🟢 Botão pressionado");
 
-    if (ordemAtiva) {
-      console.log("⚠️ Ordem já ativa, ignorando clique");
-      return;
-    }
+    //if (ordemAtiva) {
+      //console.log("⚠️ Ordem já ativa, ignorando clique");
+      //return;
+    //}
 
     try {
       const ordem = await gerarOrdemPagamento(VALOR_FIXO);
 
-      ordemAtiva = {
-        order_id: ordem.id,
-        external_reference: ordem.external_reference
-      };
+     // ordemAtiva = {
+       // order_id: ordem.id,
+        //external_reference: ordem.external_reference
+      //};
 
       mqttClient.publish(MQTT_STATUS_TOPIC, "AGUARDANDO_PAGAMENTO");
 
