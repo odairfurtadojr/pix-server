@@ -113,6 +113,152 @@ app.listen(PORT, () => {
   console.log(`Servidor rodando na porta ${PORT}`);
 });
 
+//==================CRIAR LOJA======================
+
+async function criarLoja() {
+  try {
+    const response = await axios.post(
+      `https://api.mercadopago.com/users/3078863238/stores`,
+      {
+        name: "Loja Teste",
+        external_id: "LOJATESTE",
+        location: {
+          street_number: "0123",
+          street_name: "Nome da rua de exemplo.",
+          city_name: "São José",
+          state_name: "Santa Catarina",
+          latitude: -27.577686,
+          longitude: -48.640945,
+          reference: "Perto do Mercado Pago."
+        }
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.ACCESS_TOKEN}`,
+          "Content-Type": "application/json"
+        }
+      }
+    );
+
+    console.log("✅ Loja criada com sucesso");
+
+    return {
+      id: response.data.id,
+      name: response.data.name,
+      external_id: response.data.external_id,
+      location: response.data.location
+    };
+
+  } catch (error) {
+    console.error(
+      "❌ Erro ao criar loja:",
+      error.response?.data || error.message
+    );
+    throw new Error("Falha ao criar loja no Mercado Pago");
+  }
+}
+
+//================CRIAR PDV==========================
+
+async function criarPDV() {
+  try {
+    const response = await axios.post(
+      "https://api.mercadopago.com/pos",
+      {
+        name: "PDV Teste",
+        fixed_amount: true,
+        store_id: 72503661,
+        external_store_id: "LOJATESTE",
+        external_id: "LOJ001POS001"
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.ACCESS_TOKEN}`,
+          "Content-Type": "application/json"
+        }
+      }
+    );
+
+    console.log("✅ PDV criado com sucesso");
+
+    return {
+      id: response.data.id,
+      name: response.data.name,
+      status: response.data.status,
+      store_id: response.data.store_id,
+      external_id: response.data.external_id,
+      qr: {
+        image: response.data.qr?.image,
+        template_image: response.data.qr?.template_image,
+        template_document: response.data.qr?.template_document,
+        qr_code: response.data.qr_code
+      }
+    };
+
+  } catch (error) {
+    console.error(
+      "❌ Erro ao criar PDV:",
+      error.response?.data || error.message
+    );
+    throw new Error("Falha ao criar PDV no Mercado Pago");
+  }
+}
+
+//===============CRIAR ORDEM==========================
+
+async function gerarOrdemPagamento(valor = "10.00") {
+  try {
+    const externalReference = uuidv4();
+
+    const response = await axios.post(
+      "https://api.mercadopago.com/v1/orders",
+      {
+        type: "qr",
+        total_amount: valor,
+        description: "PDV torneira chopp 1",
+        external_reference: externalReference,
+        config: {
+          qr: {
+            external_pos_id: "LOJ001POS001",
+            mode: "static"
+          }
+        },
+        transactions: {
+          payments: [
+            {
+              amount: valor
+            }
+          ]
+        }
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.ACCESS_TOKEN}`,
+          "Content-Type": "application/json"
+        }
+      }
+    );
+
+    console.log("✅ Ordem de pagamento criada");
+
+    return {
+      order_id: response.data.id,
+      status: response.data.status,
+      status_detail: response.data.status_detail,
+      total_amount: response.data.total_amount,
+      external_reference: response.data.external_reference,
+      payment_id: response.data.transactions?.payments?.[0]?.id
+    };
+
+  } catch (error) {
+    console.error(
+      "❌ Erro ao criar ordem de pagamento:",
+      error.response?.data || error.message
+    );
+    throw new Error("Falha ao criar ordem de pagamento no Mercado Pago");
+  }
+}
+
 //=============== LEITURA DO BOTÃO ===================
 
 mqttClient.subscribe("choppwesley/pix/botao", (err) => {
