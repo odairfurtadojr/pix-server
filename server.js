@@ -100,7 +100,7 @@ async function criarPDV() {
 
 // ================= FUNÇÃO: GERAR ORDEM =================
 async function gerarOrdemPagamento(valor) {
-  const externalReference = crypto.randomUUID();
+  const idempotencyKey = crypto.randomUUID();
 
   const response = await axios.post(
     "https://api.mercadopago.com/v1/orders",
@@ -108,7 +108,7 @@ async function gerarOrdemPagamento(valor) {
       type: "qr",
       total_amount: valor,
       description: "PDV torneira chopp 1",
-      external_reference: externalReference,
+      external_reference: idempotencyKey,
       config: {
         qr: {
           external_pos_id: EXTERNAL_POS_ID,
@@ -122,7 +122,8 @@ async function gerarOrdemPagamento(valor) {
     {
       headers: {
         Authorization: `Bearer ${ACCESS_TOKEN}`,
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "X-Idempotency-Key": idempotencyKey // 🔥 OBRIGATÓRIO
       }
     }
   );
