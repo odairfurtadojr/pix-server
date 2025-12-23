@@ -22,6 +22,7 @@ const STORE_ID = 72503661;
 const EXTERNAL_STORE_ID = "LOJATESTE";
 
 // PDV
+const POS_ID = "123256613";
 const EXTERNAL_POS_ID = "LOJ001POS001";
 
 // Produto
@@ -134,10 +135,10 @@ async function gerarOrdemPagamento(valor) {
 
 //================== BUSCAR QR CODE ==============
 
-async function buscarQrPDV(posIdNumerico) {
+async function buscarQrPDV(POS_ID) {
   try {
     const response = await axios.get(
-      `https://api.mercadopago.com/pos/${posIdNumerico}`,
+      `https://api.mercadopago.com/pos/${POS_ID}`,
       {
         headers: {
           Authorization: `Bearer ${ACCESS_TOKEN}`
