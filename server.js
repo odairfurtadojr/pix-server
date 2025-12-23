@@ -112,3 +112,12 @@ app.post("/webhook", async (req, res) => {
 app.listen(PORT, () => {
   console.log(`Servidor rodando na porta ${PORT}`);
 });
+
+//=============== LEITURA DO BOTÃO===================
+client.subscribe("choppwesley/pix/botao");
+
+client.on("message", (topic, message) => {
+  if (topic === "choppwesley/pix/botao") {
+    console.log("🟢 Botão apertado!");
+  }
+});
