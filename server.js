@@ -132,6 +132,44 @@ async function gerarOrdemPagamento(valor) {
   return response.data;
 }
 
+//================== BUSCAR QR CODE ==============
+
+async function buscarQrPDV(posIdNumerico) {
+  try {
+    const response = await axios.get(
+      `https://api.mercadopago.com/pos/${posIdNumerico}`,
+      {
+        headers: {
+          Authorization: `Bearer ${ACCESS_TOKEN}`
+        }
+      }
+    );
+
+    return {
+      pos_id: response.data.id,
+      name: response.data.name,
+      status: response.data.status,
+
+      qr: {
+        image: response.data.qr?.image,
+        template_image: response.data.qr?.template_image,
+        template_document: response.data.qr?.template_document
+      },
+
+      external_id: response.data.external_id,
+      store_id: response.data.store_id,
+      external_store_id: response.data.external_store_id
+    };
+
+  } catch (error) {
+    console.error(
+      "❌ Erro ao buscar QR do PDV:",
+      error.response?.data || error.message
+    );
+    throw new Error("Falha ao buscar QR do PDV no Mercado Pago");
+  }
+}
+
 // ================= MQTT: BOTÃO =================
 mqttClient.on("message", async (topic, message) => {
   const payload = message.toString();
