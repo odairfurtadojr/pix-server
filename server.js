@@ -35,49 +35,30 @@ mqttClient.on("error", (err) => {
 
 // ================= ROTA PRINCIPAL =================
 // 👉 GERA ORDER PARA QR ESTÁTICO (PIX DINÂMICO REMOVIDO)
-app.post("/criar-pagamento", async (req, res) => {
+
+app.get("/qr-pdv", async (req, res) => {
   try {
-    const response = await axios.post(
-      "https://api.mercadopago.com/v1/orders",
-      {
-        external_reference: `CHOPE_${Date.now()}`,
-        title: "Chopp Pilsen 500ml",
-        description: "Pagamento via QR Code Estático",
-        total_amount: VALOR_FIXO,
-        external_pos_id: EXTERNAL_POS_ID,
-        items: [
-          {
-            title: "Chopp Pilsen 500ml",
-            quantity: 1,
-            unit_price: VALOR_FIXO
-          }
-        ]
-      },
+    const POS_ID = 1234567; // ID numérico do POS
+
+    const response = await axios.get(
+      `https://api.mercadopago.com/pos/${POS_ID}`,
       {
         headers: {
-          Authorization: `Bearer ${ACCESS_TOKEN}`,
-          "Content-Type": "application/json"
+          Authorization: `Bearer ${process.env.ACCESS_TOKEN}`
         }
       }
     );
 
     res.json({
       success: true,
-      order_id: response.data.id,
-      external_reference: response.data.external_reference,
-      message: "Escaneie o QR Code fixo do POS para pagar"
+      pos_id: response.data.id,
+      qr_image: response.data.qr?.image,
+      qr_template: response.data.qr?.template_document
     });
 
   } catch (error) {
-    console.error(
-      "Erro ao criar order:",
-      error.response?.data || error.message
-    );
-
-    res.status(500).json({
-      success: false,
-      error: "Erro ao criar pagamento via QR estático"
-    });
+    console.error("Erro ao buscar QR do PDV:", error.response?.data || error.message);
+    res.status(500).json({ error: "Erro ao buscar QR do PDV" });
   }
 });
 
