@@ -184,22 +184,35 @@ mqttClient.on("message", async (topic, message) => {
     }
 
     try {
+      // ✅ 1. CRIA A ORDEM (ESSENCIAL)
       const ordem = await gerarOrdemPagamento(VALOR_FIXO);
-      const qrPDV = await buscarQrPDV();
-      console.log("📸 QR CODE (image):", qrPDV.qr.image);
 
       ordemAtiva = {
         order_id: ordem.id,
         external_reference: ordem.external_reference
       };
 
+      console.log("🧾 Ordem criada:", ordem.id);
+
       mqttClient.publish(MQTT_STATUS_TOPIC, "AGUARDANDO_PAGAMENTO");
 
+      // ⚠️ 2. BUSCA QR (OPCIONAL / VISUAL)
+      try {
+        const qrPDV = await buscarQrPDV();
+        console.log("📸 QR CODE (image):", qrPDV.qr.image);
+      } catch (qrError) {
+        console.warn("⚠️ QR não disponível (visual apenas)");
+      }
+
     } catch (err) {
-      console.error("❌ Erro ao gerar ordem:", err.response?.data || err.message);
+      console.error(
+        "❌ Erro REAL ao gerar ordem:",
+        err.response?.data || err.message
+      );
     }
   }
 });
+
 
 // ================= WEBHOOK MERCADO PAGO =================
 app.post("/webhook", async (req, res) => {
