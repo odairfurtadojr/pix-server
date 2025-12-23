@@ -3,25 +3,31 @@ const express = require("express");
 const axios = require("axios");
 const mqtt = require("mqtt");
 const cors = require("cors");
-const { v4: uuidv4 } = require("uuid");
+const crypto = require("crypto");
 
 // ================= APP =================
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// ================= CONFIG =================
+// ================= CONFIGURAÇÕES =================
 const PORT = process.env.PORT || 3000;
 const ACCESS_TOKEN = process.env.ACCESS_TOKEN;
 
-// ---- Mercado Pago ----
+// ===== Mercado Pago =====
 const MP_USER_ID = "3078863238";
+
+// Loja
 const STORE_ID = 72503661;
 const EXTERNAL_STORE_ID = "LOJATESTE";
+
+// PDV
 const EXTERNAL_POS_ID = "LOJ001POS001";
+
+// Produto
 const VALOR_FIXO = "30.00";
 
-// ---- Controle de estado ----
+// ===== Controle de estado =====
 let ordemAtiva = null;
 
 // ================= MQTT =================
@@ -42,107 +48,87 @@ mqttClient.on("error", err => {
 
 // ================= FUNÇÃO: CRIAR LOJA =================
 async function criarLoja() {
-  try {
-    const response = await axios.post(
-      `https://api.mercadopago.com/users/${MP_USER_ID}/stores`,
-      {
-        name: "Loja Teste",
-        external_id: EXTERNAL_STORE_ID,
-        location: {
-          street_number: "0123",
-          street_name: "Nome da rua de exemplo.",
-          city_name: "São José",
-          state_name: "Santa Catarina",
-          latitude: -27.577686,
-          longitude: -48.640945,
-          reference: "Perto do Mercado Pago."
-        }
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${ACCESS_TOKEN}`,
-          "Content-Type": "application/json"
-        }
+  const response = await axios.post(
+    `https://api.mercadopago.com/users/${MP_USER_ID}/stores`,
+    {
+      name: "Loja Teste",
+      external_id: EXTERNAL_STORE_ID,
+      location: {
+        street_number: "0123",
+        street_name: "Nome da rua de exemplo.",
+        city_name: "São José",
+        state_name: "Santa Catarina",
+        latitude: -27.577686,
+        longitude: -48.640945,
+        reference: "Perto do Mercado Pago."
       }
-    );
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${ACCESS_TOKEN}`,
+        "Content-Type": "application/json"
+      }
+    }
+  );
 
-    console.log("✅ Loja criada");
-
-    return response.data;
-
-  } catch (err) {
-    console.error("❌ Erro criar loja:", err.response?.data || err.message);
-    throw err;
-  }
+  console.log("✅ Loja criada");
+  return response.data;
 }
 
 // ================= FUNÇÃO: CRIAR PDV =================
 async function criarPDV() {
-  try {
-    const response = await axios.post(
-      "https://api.mercadopago.com/pos",
-      {
-        name: "PDV Teste",
-        fixed_amount: true,
-        store_id: STORE_ID,
-        external_store_id: EXTERNAL_STORE_ID,
-        external_id: EXTERNAL_POS_ID
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${ACCESS_TOKEN}`,
-          "Content-Type": "application/json"
-        }
+  const response = await axios.post(
+    "https://api.mercadopago.com/pos",
+    {
+      name: "PDV Teste",
+      fixed_amount: true,
+      store_id: STORE_ID,
+      external_store_id: EXTERNAL_STORE_ID,
+      external_id: EXTERNAL_POS_ID
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${ACCESS_TOKEN}`,
+        "Content-Type": "application/json"
       }
-    );
+    }
+  );
 
-    console.log("✅ PDV criado");
-
-    return response.data;
-
-  } catch (err) {
-    console.error("❌ Erro criar PDV:", err.response?.data || err.message);
-    throw err;
-  }
+  console.log("✅ PDV criado");
+  return response.data;
 }
 
 // ================= FUNÇÃO: GERAR ORDEM =================
 async function gerarOrdemPagamento(valor) {
-  const externalReference = uuidv4();
+  const externalReference = crypto.randomUUID();
 
-  try {
-    const response = await axios.post(
-      "https://api.mercadopago.com/v1/orders",
-      {
-        type: "qr",
-        total_amount: valor,
-        description: "PDV torneira chopp 1",
-        external_reference: externalReference,
-        config: {
-          qr: {
-            external_pos_id: EXTERNAL_POS_ID,
-            mode: "static"
-          }
-        },
-        transactions: {
-          payments: [{ amount: valor }]
+  const response = await axios.post(
+    "https://api.mercadopago.com/v1/orders",
+    {
+      type: "qr",
+      total_amount: valor,
+      description: "PDV torneira chopp 1",
+      external_reference: externalReference,
+      config: {
+        qr: {
+          external_pos_id: EXTERNAL_POS_ID,
+          mode: "static"
         }
       },
-      {
-        headers: {
-          Authorization: `Bearer ${ACCESS_TOKEN}`,
-          "Content-Type": "application/json"
-        }
+      transactions: {
+        payments: [{ amount: valor }]
       }
-    );
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${ACCESS_TOKEN}`,
+        "Content-Type": "application/json"
+      }
+    }
+  );
 
-    console.log("🧾 Ordem criada:", response.data.id);
-    return response.data;
-
-  } catch (err) {
-    console.error("❌ Erro gerar ordem:", err.response?.data || err.message);
-    throw err;
-  }
+  console.log("🧾 Ordem criada:", response.data.id);
+  return response.data;
 }
 
 // ================= MQTT: BOTÃO =================
@@ -168,7 +154,7 @@ mqttClient.on("message", async (topic, message) => {
       mqttClient.publish(MQTT_STATUS_TOPIC, "AGUARDANDO_PAGAMENTO");
 
     } catch (err) {
-      console.error("Erro ao criar ordem:", err.message);
+      console.error("❌ Erro ao gerar ordem:", err.response?.data || err.message);
     }
   }
 });
@@ -181,7 +167,7 @@ app.post("/webhook", async (req, res) => {
     if (req.body.action !== "order.processed") return;
 
     const payments = req.body.data?.transactions?.payments;
-    if (!payments?.length) return;
+    if (!payments || payments.length === 0) return;
 
     const payment = payments[0];
 
@@ -196,7 +182,7 @@ app.post("/webhook", async (req, res) => {
     }
 
   } catch (err) {
-    console.error("Erro webhook:", err.message);
+    console.error("❌ Erro webhook:", err.message);
   }
 });
 
@@ -206,7 +192,7 @@ app.post("/criar-loja", async (req, res) => {
     const loja = await criarLoja();
     res.json(loja);
   } catch {
-    res.status(500).json({ error: "Erro criar loja" });
+    res.status(500).json({ error: "Erro ao criar loja" });
   }
 });
 
@@ -215,11 +201,11 @@ app.post("/criar-pdv", async (req, res) => {
     const pdv = await criarPDV();
     res.json(pdv);
   } catch {
-    res.status(500).json({ error: "Erro criar PDV" });
+    res.status(500).json({ error: "Erro ao criar PDV" });
   }
 });
 
 // ================= START =================
 app.listen(PORT, () => {
-  console.log(`🚀 Servidor rodando na porta ${PORT}`);
+  console.log(`🚀 Servidor PIX rodando na porta ${PORT}`);
 });
