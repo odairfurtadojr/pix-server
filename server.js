@@ -102,23 +102,22 @@ async function criarPDV() {
 // ================= FUNÇÃO: GERAR ORDEM =================
 async function gerarOrdemPagamento() {
   const uuid = crypto.randomUUID();
-
   const payload = {
     type: "qr",
-    total_amount: 5.00,
+    total_amount: 5.0,
     description: "PDV torneira chopp 1",
     external_reference: uuid,
     expiration_time: "PT24H",
     config: {
       qr: {
-        external_pos_id: EXTERNAL_POS_ID,
+        external_pos_id: "LOJ001POS001",
         mode: "static"
       }
     },
     transactions: {
       payments: [
         {
-          amount: 5.00
+          amount: 5.0
         }
       ]
     }
