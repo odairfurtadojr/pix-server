@@ -104,40 +104,36 @@ async function criarPDV() {
 async function gerarOrdemPagamento(valor) {
   const idempotencyKey = crypto.randomUUID();
 
-  const response = await axios.post(
-    "https://api.mercadopago.com/v1/orders",
-    {
-      type: "qr",
-      total_amount: 5.0,
-      description: "PDV torneira chopp 1",
-      external_reference: `pedido_${idempotencyKey}`,
-      expiration_time: new Date(Date.now() + 86400 * 1000).toISOString(),
-      config: {
-        qr: {
-          external_pos_id: EXTERNAL_POS_ID,
-          mode: "static"
+  try {
+    const response = await axios.post(
+      "https://api.mercadopago.com/v1/payments",
+      {
+        transaction_amount: Number(5.0), // 🔥 number, não string
+        description: "PDV torneira chopp 1",
+        payment_method_id: "pix",
+        external_reference: `pedido_${idempotencyKey}`,
+        payer: {
+          email: "cliente@choppwesley.com"
         }
       },
-      transactions: {
-        payments: [
-          {
-            amount: 5.0,
-            payment_method_id: "pix"
-          }
-        ]
+      {
+        headers: {
+          Authorization: `Bearer ${ACCESS_TOKEN}`,
+          "Content-Type": "application/json",
+          "X-Idempotency-Key": idempotencyKey
+        }
       }
-    },
-    {
-      headers: {
-        Authorization: `Bearer ${ACCESS_TOKEN}`,
-        "Content-Type": "application/json",
-        "X-Idempotency-Key": idempotencyKey
-      }
-    }
-  );
+    );
 
-  console.log("🧾 Ordem criada:", response.data.id);
-  return response.data;
+    console.log("🧾 Pagamento criado com sucesso!");
+    console.log("ID:", response.data.id);
+    console.log("QR Code:", response.data.point_of_interaction.transaction_data.qr_code);
+
+    return response.data;
+  } catch (error) {
+    console.error("❌ Erro REAL ao gerar ordem:", error.response?.data || error.message);
+    throw error;
+  }
 }
 
 // ================= FUNÇÃO: BUSCAR QR DO PDV =================
