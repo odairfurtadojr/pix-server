@@ -100,6 +100,9 @@ async function criarPDV() {
 }
 
 // ================= FUNÇÃO: GERAR ORDEM =================
+import crypto from "crypto";
+import axios from "axios";
+
 async function gerarOrdemPagamento(valor) {
   const idempotencyKey = crypto.randomUUID();
 
@@ -109,16 +112,21 @@ async function gerarOrdemPagamento(valor) {
       type: "qr",
       total_amount: valor,
       description: "PDV torneira chopp 1",
-      external_reference: idempotencyKey,
-      expiration_time: "PT86400S",
+      external_reference: `pedido_${idempotencyKey}`,
+      expiration_time: new Date(Date.now() + 86400 * 1000).toISOString(),
       config: {
         qr: {
           external_pos_id: EXTERNAL_POS_ID,
-          mode: "static"
+          mode: "dynamic"
         }
       },
       transactions: {
-        payments: [{ amount: valor }]
+        payments: [
+          {
+            amount: valor,
+            payment_method_id: "pix"
+          }
+        ]
       }
     },
     {
