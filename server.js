@@ -1,9 +1,9 @@
 // ================= IMPORTS =================
-const express = require("express");
-const axios = require("axios");
-const mqtt = require("mqtt");
-const cors = require("cors");
-const crypto = require("crypto");
+
+import express from "express";
+import axios from "axios";
+import crypto from "crypto";
+
 
 // ================= APP =================
 const app = express();
