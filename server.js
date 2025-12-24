@@ -251,6 +251,9 @@ app.post("/criar-pdv", async (req, res) => {
 app.listen(PORT, () => {
   console.log(`🚀 Servidor PIX rodando na porta ${PORT}`);
 });
+app.get("/health", (req, res) => {
+  res.status(200).send("OK");
+});
 
 // ================= LOG QR NO BOOT (PARA TESTE) =================
 (async () => {
