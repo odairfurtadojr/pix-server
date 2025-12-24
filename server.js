@@ -105,7 +105,7 @@ async function gerarOrdemPagamento() {
 
   const payload = {
     type: "qr",
-    total_amount: VALOR_FIXO,
+    total_amount: 5.00,
     description: "PDV torneira chopp 1",
     external_reference: uuid,
     expiration_time: "PT24H",
@@ -118,7 +118,7 @@ async function gerarOrdemPagamento() {
     transactions: {
       payments: [
         {
-          amount: VALOR_FIXO
+          amount: 5.00
         }
       ]
     }
