@@ -100,9 +100,6 @@ async function criarPDV() {
 }
 
 // ================= FUNÇÃO: GERAR ORDEM =================
-
-const ACCESS_TOKEN = process.env.MP_ACCESS_TOKEN;
-
 export async function gerarOrdemPagamento() {
   const uuid = crypto.randomUUID();
 
