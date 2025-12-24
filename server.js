@@ -103,52 +103,47 @@ async function criarPDV() {
 
 
 export async function gerarOrdemPagamento() {
-const uuid = crypto.randomUUID();
-
-  const payload = {
-    type: "qr",
-    total_amount: 10.0,
-    description: "PDV torneira chopp 1",
-    external_reference: uuid,
-    config: {
-      qr: {
-        external_pos_id: "LOJ001POS001",
-        mode: "static"
-      }
-    },
-    transactions: {
-      payments: [
-        {
-          amount: 10.0
-        }
-      ]
-    }
-  };
-
   try {
     const response = await axios.post(
       "https://api.mercadopago.com/v1/orders",
-      payload,
+      {
+        type: "qr",
+        total_amount: "10.00",
+        description: "PDV torneira chopp 1",
+        external_reference: crypto.randomUUID(),
+        config: {
+          qr: {
+            external_pos_id: "LOJ001POS001",
+            mode: "static"
+          }
+        },
+        transactions: {
+          payments: [
+            {
+              amount: "10.00"
+            }
+          ]
+        }
+      },
       {
         headers: {
           Authorization: `Bearer ${ACCESS_TOKEN}`,
-          "Content-Type": "application/json",
-          "X-Idempotency-Key": uuid
+          "Content-Type": "application/json"
         }
       }
     );
 
+    // Retorna exatamente o que a API respondeu
     return response.data;
 
   } catch (error) {
     console.error(
       "❌ Erro ao gerar ordem:",
-      JSON.stringify(error.response?.data, null, 2)
+      JSON.stringify(error.response?.data || error.message, null, 2)
     );
     throw error;
   }
 }
-
 // ================= MQTT: TRIGGER =================
 mqttClient.on("message", async (topic, message) => {
   const payload = message.toString();
