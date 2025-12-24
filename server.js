@@ -108,20 +108,20 @@ async function gerarOrdemPagamento(valor) {
     "https://api.mercadopago.com/v1/orders",
     {
       type: "qr",
-      total_amount: valor,
+      total_amount: 5.0,
       description: "PDV torneira chopp 1",
       external_reference: `pedido_${idempotencyKey}`,
       expiration_time: new Date(Date.now() + 86400 * 1000).toISOString(),
       config: {
         qr: {
           external_pos_id: EXTERNAL_POS_ID,
-          mode: "dynamic"
+          mode: "static"
         }
       },
       transactions: {
         payments: [
           {
-            amount: valor,
+            amount: 5.0,
             payment_method_id: "pix"
           }
         ]
