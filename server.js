@@ -100,8 +100,6 @@ async function criarPDV() {
 }
 
 // ================= FUNÇÃO: GERAR ORDEM =================
-import crypto from "crypto";
-import axios from "axios";
 
 async function gerarOrdemPagamento(valor) {
   const idempotencyKey = crypto.randomUUID();
