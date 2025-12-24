@@ -1,27 +1,12 @@
 // ================= IMPORTS =================
-
 import express from "express";
 import cors from "cors";
 import axios from "axios";
 import crypto from "crypto";
 import dotenv from "dotenv";
+import mqtt from "mqtt";
 
 dotenv.config();
-
-const app = express();
-
-app.use(cors());              // agora funciona ✅
-app.use(express.json());
-
-app.get("/", (req, res) => {
-  res.send("Servidor rodando 🚀");
-});
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`🔥 Server rodando na porta ${PORT}`);
-});
-
 
 // ================= APP =================
 const app = express();
@@ -39,12 +24,12 @@ const MP_USER_ID = "3078863238";
 const STORE_ID = 72503661;
 const EXTERNAL_STORE_ID = "LOJATESTE";
 
-// PDV (ID NUMÉRICO REAL)
+// PDV
 const POS_ID = 123256613;
 const EXTERNAL_POS_ID = "LOJ001POS001";
 
 // Produto
-const VALOR_FIXO = "30.00";
+const VALOR_FIXO = 30.0;
 
 // ===== Controle de estado =====
 let ordemAtiva = null;
@@ -74,12 +59,12 @@ async function criarLoja() {
       external_id: EXTERNAL_STORE_ID,
       location: {
         street_number: "0123",
-        street_name: "Nome da rua de exemplo.",
+        street_name: "Rua Exemplo",
         city_name: "São José",
         state_name: "Santa Catarina",
         latitude: -27.577686,
         longitude: -48.640945,
-        reference: "Perto do Mercado Pago."
+        reference: "Perto do Mercado Pago"
       }
     },
     {
@@ -118,56 +103,48 @@ async function criarPDV() {
 }
 
 // ================= FUNÇÃO: GERAR ORDEM =================
-export async function gerarOrdemPagamento() {
+async function gerarOrdemPagamento() {
   const uuid = crypto.randomUUID();
 
   const payload = {
     type: "qr",
-    total_amount: 10.0,
+    total_amount: VALOR_FIXO,
     description: "PDV torneira chopp 1",
     external_reference: uuid,
     expiration_time: "PT324H",
     config: {
       qr: {
-        external_pos_id: "LOJ001POS001",
+        external_pos_id: EXTERNAL_POS_ID,
         mode: "static"
       }
     },
     transactions: {
       payments: [
         {
-          amount: 10.0
+          amount: VALOR_FIXO
         }
       ]
     }
   };
 
-  try {
-    const response = await axios.post(
-      "https://api.mercadopago.com/v1/orders",
-      payload,
-      {
-        headers: {
-          Authorization: `Bearer ${ACCESS_TOKEN}`,
-          "Content-Type": "application/json",
-          "X-Idempotency-Key": uuid
-        }
+  const response = await axios.post(
+    "https://api.mercadopago.com/v1/orders",
+    payload,
+    {
+      headers: {
+        Authorization: `Bearer ${ACCESS_TOKEN}`,
+        "Content-Type": "application/json",
+        "X-Idempotency-Key": uuid
       }
-    );
+    }
+  );
 
-    console.log("✅ Ordem criada:", response.data.id);
-    return response.data;
-
-  } catch (error) {
-    console.error(
-      "❌ Erro REAL ao gerar ordem:",
-      error.response?.data || error.message
-    );
-    throw error;
-  }
+  console.log("✅ Ordem criada:", response.data.id);
+  ordemAtiva = response.data.id;
+  return response.data;
 }
 
-// ================= FUNÇÃO: BUSCAR QR DO PDV =================
+// ================= FUNÇÃO: BUSCAR QR PDV =================
 async function buscarQrPDV() {
   const response = await axios.get(
     `https://api.mercadopago.com/pos/${POS_ID}`,
@@ -178,19 +155,7 @@ async function buscarQrPDV() {
     }
   );
 
-  return {
-    pos_id: response.data.id,
-    name: response.data.name,
-    status: response.data.status,
-    qr: {
-      image: response.data.qr?.image,
-      template_image: response.data.qr?.template_image,
-      template_document: response.data.qr?.template_document
-    },
-    external_id: response.data.external_id,
-    store_id: response.data.store_id,
-    external_store_id: response.data.external_store_id
-  };
+  return response.data.qr?.image;
 }
 
 // ================= MQTT: TRIGGER =================
@@ -198,62 +163,52 @@ mqttClient.on("message", async (topic, message) => {
   const payload = message.toString();
 
   if (topic === MQTT_ACIONAMENTO_TOPIC && payload === "acionado") {
-    console.log("🟢 Pedido Gerado");
+    console.log("🟢 Pedido acionado via MQTT");
 
+    if (ordemAtiva) {
+      console.log("⚠️ Já existe ordem ativa");
+      return;
+    }
 
     try {
-      const ordem = await gerarOrdemPagamento(VALOR_FIXO);
+      await gerarOrdemPagamento();
       mqttClient.publish(MQTT_STATUS_TOPIC, "AGUARDANDO_PAGAMENTO");
-
     } catch (err) {
       console.error(
-        "❌ Erro REAL ao gerar ordem:",
+        "❌ Erro ao gerar ordem:",
         err.response?.data || err.message
       );
     }
   }
 });
 
-// ================= WEBHOOK MERCADO PAGO =================
-app.post("/webhook", async (req, res) => {
+// ================= WEBHOOK =================
+app.post("/webhook", (req, res) => {
   res.sendStatus(200);
 
   try {
     const action = req.body.action;
-
     const payments = req.body.data?.transactions?.payments;
-    if (!payments || payments.length === 0) return;
+    if (!payments?.length) return;
 
     const payment = payments[0];
 
-    // ===============================
-    // ⏰ PEDIDO EXPIRADO
-    // ===============================
     if (
       action === "order.expired" ||
-      (payment.status === "cancelled" &&
-       payment.status_detail === "expired")
+      payment.status === "cancelled"
     ) {
-      console.log("⏰ PEDIDO EXPIRADO");
-
+      console.log("⏰ Pedido expirado");
       ordemAtiva = null;
       mqttClient.publish(MQTT_STATUS_TOPIC, "EXPIRADO");
-      return;
     }
 
-    // ===============================
-    // ✅ PAGAMENTO CONFIRMADO
-    // ===============================
     if (
       action === "order.processed" &&
-      payment.status === "processed" &&
-      payment.status_detail === "accredited"
+      payment.status === "processed"
     ) {
-      console.log("✅ PAGAMENTO CONFIRMADO");
-
+      console.log("✅ Pagamento confirmado");
       ordemAtiva = null;
       mqttClient.publish(MQTT_STATUS_TOPIC, "PAGO");
-      return;
     }
 
   } catch (err) {
@@ -261,47 +216,39 @@ app.post("/webhook", async (req, res) => {
   }
 });
 
-// ================= ROTAS AUXILIARES =================
-app.post("/criar-loja", async (req, res) => {
+// ================= ROTAS AUX =================
+app.post("/criar-loja", async (_, res) => {
   try {
-    const loja = await criarLoja();
-    res.json(loja);
+    res.json(await criarLoja());
   } catch {
     res.status(500).json({ error: "Erro ao criar loja" });
   }
 });
 
-app.post("/criar-pdv", async (req, res) => {
+app.post("/criar-pdv", async (_, res) => {
   try {
-    const pdv = await criarPDV();
-    res.json(pdv);
+    res.json(await criarPDV());
   } catch {
     res.status(500).json({ error: "Erro ao criar PDV" });
   }
 });
 
-// ================= START =================
-app.listen(PORT, () => {
-  console.log(`🚀 Servidor PIX rodando na porta ${PORT}`);
-});
-
-app.get("/health", (req, res) => {
+app.get("/health", (_, res) => {
   res.status(200).send("OK");
 });
 
-app.get("/", (req, res) => {
+app.get("/", (_, res) => {
   res.send("PIX Server online 🚀");
 });
 
-// ================= LOG QR NO BOOT (PARA TESTE) =================
-(async () => {
+// ================= START =================
+app.listen(PORT, async () => {
+  console.log(`🚀 Servidor PIX rodando na porta ${PORT}`);
+
   try {
     const qr = await buscarQrPDV();
-    console.log("📸 QR CODE DO PDV (BOOT):", qr.qr.image);
+    console.log("📸 QR CODE DO PDV:", qr);
   } catch (err) {
-    console.error(
-      "❌ Não foi possível buscar o QR no boot:",
-      err.response?.data || err.message
-    );
+    console.error("❌ Erro ao buscar QR:", err.message);
   }
-})();
+});
