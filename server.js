@@ -3,10 +3,7 @@ import express from "express";
 import cors from "cors";
 import axios from "axios";
 import crypto from "crypto";
-import dotenv from "dotenv";
 import mqtt from "mqtt";
-
-dotenv.config();
 
 // ================= APP =================
 const app = express();
