@@ -100,11 +100,14 @@ async function criarPDV() {
 }
 
 // ================= FUNÇÃO: GERAR ORDEM =================
-async function gerarOrdemPagamento() {
-  const uuid = crypto.randomUUID();
+
+
+export async function gerarOrdemPagamento() {
+const uuid = crypto.randomUUID();
+
   const payload = {
     type: "qr",
-    total_amount: 5.0,
+    total_amount: 10.0,
     description: "PDV torneira chopp 1",
     external_reference: uuid,
     config: {
@@ -116,41 +119,34 @@ async function gerarOrdemPagamento() {
     transactions: {
       payments: [
         {
-          amount: 5.0
+          amount: 10.0
         }
       ]
     }
   };
 
-  const response = await axios.post(
-    "https://api.mercadopago.com/v1/orders",
-    payload,
-    {
-      headers: {
-        Authorization: `Bearer ${ACCESS_TOKEN}`,
-        "Content-Type": "application/json",
-        "X-Idempotency-Key": uuid
+  try {
+    const response = await axios.post(
+      "https://api.mercadopago.com/v1/orders",
+      payload,
+      {
+        headers: {
+          Authorization: `Bearer ${ACCESS_TOKEN}`,
+          "Content-Type": "application/json",
+          "X-Idempotency-Key": uuid
+        }
       }
-    }
-  );
+    );
 
-  console.log("✅ Ordem criada:", response.data.id);
-  ordemAtiva = response.data.id;
-  return response.data;
-}
+    return response.data;
 
-// ================= FUNÇÃO: BUSCAR QR PDV =================
-async function buscarQrPDV() {
-  const response = await axios.get(
-    `https://api.mercadopago.com/pos/${POS_ID}`,
-    {
-      headers: {
-        Authorization: `Bearer ${ACCESS_TOKEN}`
-      }
-    }
-  );
-
-  return response.data.qr?.image;
+  } catch (error) {
+    console.error(
+      "❌ Erro ao gerar ordem:",
+      JSON.stringify(error.response?.data, null, 2)
+    );
+    throw error;
+  }
 }
 
 // ================= MQTT: TRIGGER =================
