@@ -108,7 +108,7 @@ async function gerarOrdemPagamento() {
     total_amount: VALOR_FIXO,
     description: "PDV torneira chopp 1",
     external_reference: uuid,
-    expiration_time: "PT324H",
+    expiration_time: "PT24H",
     config: {
       qr: {
         external_pos_id: EXTERNAL_POS_ID,
