@@ -110,6 +110,7 @@ async function gerarOrdemPagamento(valor) {
       total_amount: valor,
       description: "PDV torneira chopp 1",
       external_reference: idempotencyKey,
+      expiration_time: "PT30S",
       config: {
         qr: {
           external_pos_id: EXTERNAL_POS_ID,
@@ -195,14 +196,33 @@ app.post("/webhook", async (req, res) => {
   res.sendStatus(200);
 
   try {
-    if (req.body.action !== "order.processed") return;
+    const action = req.body.action;
 
     const payments = req.body.data?.transactions?.payments;
     if (!payments || payments.length === 0) return;
 
     const payment = payments[0];
 
+    // ===============================
+    // ⏰ PEDIDO EXPIRADO
+    // ===============================
     if (
+      action === "order.expired" ||
+      (payment.status === "cancelled" &&
+       payment.status_detail === "expired")
+    ) {
+      console.log("⏰ PEDIDO EXPIRADO");
+
+      ordemAtiva = null;
+      mqttClient.publish(MQTT_STATUS_TOPIC, "EXPIRADO");
+      return;
+    }
+
+    // ===============================
+    // ✅ PAGAMENTO CONFIRMADO
+    // ===============================
+    if (
+      action === "order.processed" &&
       payment.status === "processed" &&
       payment.status_detail === "accredited"
     ) {
@@ -210,6 +230,7 @@ app.post("/webhook", async (req, res) => {
 
       ordemAtiva = null;
       mqttClient.publish(MQTT_STATUS_TOPIC, "PAGO");
+      return;
     }
 
   } catch (err) {
