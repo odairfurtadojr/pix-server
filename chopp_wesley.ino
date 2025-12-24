@@ -12,6 +12,7 @@ const char* mqttTopic = "choppwesley/pix/status";
 
 // ================= HARDWARE =================
 #define RELE 5
+#define BOTAO 15
 
 WiFiClient espClient;
 PubSubClient client(espClient);
@@ -24,6 +25,7 @@ void callback(char* topic, byte* payload, unsigned int length);
 void setup() {
   Serial.begin(115200);
 
+  pinMode(BOTAO, INPUT_PULLUP); // ativa pull-up interno
   pinMode(RELE, OUTPUT);
   digitalWrite(RELE, LOW);
 
@@ -31,7 +33,10 @@ void setup() {
 
   client.setServer(mqttServer, mqttPort);
   client.setCallback(callback);
+  client.publish("choppwesley/pix/acionamento", "acionado");//primeiro pedido gerado
+  Serial.print("Pedido Gerado\n");
 }
+
 
 void loop() {
   if (!client.connected()) {
@@ -82,8 +87,17 @@ void callback(char* topic, byte* payload, unsigned int length) {
   if (mensagem == "PAGO") {
     Serial.println("Pagamento confirmado!");
 
-    digitalWrite(RELE, HIGH);
-    delay(3000);
+    digitalWrite(RELE, HIGH); //Relé para acionamento da torneira
+    delay(5000);
     digitalWrite(RELE, LOW);
+
+    client.publish("choppwesley/pix/acionamento", "acionado");//gerar novo pedido
+    Serial.print("Pedido Gerado\n");
+  }
+    if (mensagem == "EXPIRADO") {
+    Serial.println("Pedido Expirado!");
+    delay(200);
+    client.publish("choppwesley/pix/acionamento", "acionado");//gerar novo pedido
+    Serial.print("Pedido Gerado\n");
   }
 }
