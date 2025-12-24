@@ -100,9 +100,9 @@ async function criarPDV() {
 }
 
 // ================= FUNÇÃO: GERAR ORDEM =================
-
-
 export async function gerarOrdemPagamento() {
+  const idempotencyKey = crypto.randomUUID();
+
   try {
     const response = await axios.post(
       "https://api.mercadopago.com/v1/orders",
@@ -128,12 +128,12 @@ export async function gerarOrdemPagamento() {
       {
         headers: {
           Authorization: `Bearer ${ACCESS_TOKEN}`,
-          "Content-Type": "application/json"
+          "Content-Type": "application/json",
+          "X-Idempotency-Key": idempotencyKey // 🔥 OBRIGATÓRIO
         }
       }
     );
 
-    // Retorna exatamente o que a API respondeu
     return response.data;
 
   } catch (error) {
