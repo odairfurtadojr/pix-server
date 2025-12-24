@@ -34,13 +34,13 @@ let ordemAtiva = null;
 // ================= MQTT =================
 const MQTT_BROKER = "mqtt://broker.hivemq.com";
 const MQTT_STATUS_TOPIC = "choppwesley/pix/status";
-const MQTT_BOTAO_TOPIC = "choppwesley/pix/botao";
+const MQTT_ACIONAMENTO_TOPIC = "choppwesley/pix/acionamento";
 
 const mqttClient = mqtt.connect(MQTT_BROKER);
 
 mqttClient.on("connect", () => {
   console.log("✅ MQTT conectado");
-  mqttClient.subscribe(MQTT_BOTAO_TOPIC);
+  mqttClient.subscribe(MQTT_ACIONAMENTO_TOPIC);
 });
 
 mqttClient.on("error", err => {
@@ -110,7 +110,7 @@ async function gerarOrdemPagamento(valor) {
       total_amount: valor,
       description: "PDV torneira chopp 1",
       external_reference: idempotencyKey,
-      expiration_time: "PT30S",
+      expiration_time: "PT86400S",
       config: {
         qr: {
           external_pos_id: EXTERNAL_POS_ID,
@@ -160,26 +160,16 @@ async function buscarQrPDV() {
   };
 }
 
-// ================= MQTT: BOTÃO =================
+// ================= MQTT: TRIGGER =================
 mqttClient.on("message", async (topic, message) => {
   const payload = message.toString();
 
-  if (topic === MQTT_BOTAO_TOPIC && payload === "pressionado") {
-    console.log("🟢 Botão pressionado");
+  if (topic === MQTT_ACIONAMENTO_TOPIC && payload === "acionado") {
+    console.log("🟢 Pedido Gerado");
 
-    //if (ordemAtiva) {
-      //console.log("⚠️ Ordem já ativa, ignorando clique");
-      //return;
-    //}
 
     try {
       const ordem = await gerarOrdemPagamento(VALOR_FIXO);
-
-     // ordemAtiva = {
-       // order_id: ordem.id,
-        //external_reference: ordem.external_reference
-      //};
-
       mqttClient.publish(MQTT_STATUS_TOPIC, "AGUARDANDO_PAGAMENTO");
 
     } catch (err) {
