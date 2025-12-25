@@ -22,11 +22,10 @@ const STORE_ID = 72503661;
 const EXTERNAL_STORE_ID = "LOJATESTE";
 
 // PDV
-const POS_ID = 123256613;
 const EXTERNAL_POS_ID = "LOJ001POS001";
 
 // Produto
-const VALOR_FIXO = 30.0;
+const VALOR_FIXO = 10.0;
 
 // ===== Controle de estado =====
 let ordemAtiva = null;
@@ -100,71 +99,63 @@ async function criarPDV() {
 }
 
 // ================= FUNÇÃO: GERAR ORDEM =================
-export async function gerarOrdemPagamento() {
+async function gerarOrdemPagamento() {
   const idempotencyKey = crypto.randomUUID();
 
-  try {
-    const response = await axios.post(
-      "https://api.mercadopago.com/v1/orders",
-      {
-        type: "qr",
-        total_amount: "10.00",
-        description: "PDV torneira chopp 1",
-        external_reference: crypto.randomUUID(),
-        config: {
-          qr: {
-            external_pos_id: "LOJ001POS001",
-            mode: "static"
-          }
-        },
-        transactions: {
-          payments: [
-            {
-              amount: "10.00"
-            }
-          ]
+  const response = await axios.post(
+    "https://api.mercadopago.com/v1/orders",
+    {
+      type: "qr",
+      total_amount: VALOR_FIXO.toFixed(2),
+      description: "PDV torneira chopp 1",
+      external_reference: crypto.randomUUID(),
+      config: {
+        qr: {
+          external_pos_id: EXTERNAL_POS_ID,
+          mode: "static"
         }
       },
-      {
-        headers: {
-          Authorization: `Bearer ${ACCESS_TOKEN}`,
-          "Content-Type": "application/json",
-          "X-Idempotency-Key": idempotencyKey // 🔥 OBRIGATÓRIO
-        }
+      transactions: {
+        payments: [
+          { amount: VALOR_FIXO.toFixed(2) }
+        ]
       }
-    );
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${ACCESS_TOKEN}`,
+        "Content-Type": "application/json",
+        "X-Idempotency-Key": idempotencyKey
+      }
+    }
+  );
 
-    return response.data;
+  ordemAtiva = response.data.id;
+  console.log("🧾 Ordem criada:", ordemAtiva);
 
-  } catch (error) {
-    console.error(
-      "❌ Erro ao gerar ordem:",
-      JSON.stringify(error.response?.data || error.message, null, 2)
-    );
-    throw error;
-  }
+  return response.data;
 }
+
 // ================= MQTT: TRIGGER =================
 mqttClient.on("message", async (topic, message) => {
   const payload = message.toString();
 
-  if (topic === MQTT_ACIONAMENTO_TOPIC && payload === "acionado") {
-    console.log("🟢 Pedido acionado via MQTT");
+  if (topic !== MQTT_ACIONAMENTO_TOPIC) return;
+  if (payload !== "acionado") return;
 
-    if (ordemAtiva) {
-      console.log("⚠️ Já existe ordem ativa");
-      return;
-    }
+  console.log("🟢 Pedido acionado via MQTT");
 
-    try {
-      await gerarOrdemPagamento();
-      mqttClient.publish(MQTT_STATUS_TOPIC, "AGUARDANDO_PAGAMENTO");
-    } catch (err) {
-      console.error(
-        "❌ Erro ao gerar ordem:",
-        err.response?.data || err.message
-      );
-    }
+  if (ordemAtiva) {
+    console.log("⚠️ Já existe ordem ativa:", ordemAtiva);
+    return;
+  }
+
+  try {
+    await gerarOrdemPagamento();
+    mqttClient.publish(MQTT_STATUS_TOPIC, "AGUARDANDO_PAGAMENTO");
+  } catch (err) {
+    console.error("❌ Erro ao gerar ordem:", err.response?.data || err.message);
+    ordemAtiva = null;
   }
 });
 
@@ -179,24 +170,17 @@ app.post("/webhook", (req, res) => {
 
     const payment = payments[0];
 
-    if (
-      action === "order.expired" ||
-      payment.status === "cancelled"
-    ) {
+    if (action === "order.expired" || payment.status === "cancelled") {
       console.log("⏰ Pedido expirado");
       ordemAtiva = null;
       mqttClient.publish(MQTT_STATUS_TOPIC, "EXPIRADO");
     }
 
-    if (
-      action === "order.processed" &&
-      payment.status === "processed"
-    ) {
+    if (action === "order.processed" && payment.status === "processed") {
       console.log("✅ Pagamento confirmado");
       ordemAtiva = null;
       mqttClient.publish(MQTT_STATUS_TOPIC, "PAGO");
     }
-
   } catch (err) {
     console.error("❌ Erro webhook:", err.message);
   }
@@ -220,7 +204,7 @@ app.post("/criar-pdv", async (_, res) => {
 });
 
 app.get("/health", (_, res) => {
-  res.status(200).send("OK");
+  res.status(200).json({ status: "ok" });
 });
 
 app.get("/", (_, res) => {
@@ -228,5 +212,6 @@ app.get("/", (_, res) => {
 });
 
 // ================= START =================
-app.listen(PORT, async () => {
+app.listen(PORT, () => {
   console.log(`🚀 Servidor PIX rodando na porta ${PORT}`);
+});
