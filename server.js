@@ -230,11 +230,3 @@ app.get("/", (_, res) => {
 // ================= START =================
 app.listen(PORT, async () => {
   console.log(`🚀 Servidor PIX rodando na porta ${PORT}`);
-
-  try {
-    const qr = await buscarQrPDV();
-    console.log("📸 QR CODE DO PDV:", qr);
-  } catch (err) {
-    console.error("❌ Erro ao buscar QR:", err.message);
-  }
-});
