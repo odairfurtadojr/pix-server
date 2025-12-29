@@ -1,9 +1,6 @@
 #include <WiFi.h>
+#include <WiFiManager.h>
 #include <PubSubClient.h>
-
-// ================= WIFI =================
-const char* ssid = "ODAIR";
-const char* password = "jeremias203";
 
 // ================= MQTT =================
 const char* mqttServer = "broker.hivemq.com";
@@ -18,21 +15,52 @@ WiFiClient espClient;
 PubSubClient client(espClient);
 
 // ================= PROTÓTIPOS =================
-void conectarWiFi();
 void conectarMQTT();
 void callback(char* topic, byte* payload, unsigned int length);
+void reconnectMQTT() {
+  while (!client.connected()) {
+    Serial.print("Conectando ao MQTT...");
+    if (client.connect("ESP32-Chopp")) {
+      Serial.println(" conectado!");
+    } else {
+      Serial.print(" falhou, rc=");
+      Serial.print(client.state());
+      Serial.println(" tentando novamente em 2s");
+      delay(2000);
+    }
+  }
+}
 
 void setup() {
-  Serial.begin(115200);
 
-  pinMode(BOTAO, INPUT_PULLUP); // ativa pull-up interno
+  Serial.begin(115200);
   pinMode(RELE, OUTPUT);
   digitalWrite(RELE, LOW);
+  Serial.println("\nIniciando WiFiManager...");
 
-  conectarWiFi();
+  // Cria o objeto WiFiManager
+  WiFiManager wm;
+
+  // Nome da rede AP que será criada se não conectar
+  // Ex: ESP32-CONFIG
+  bool res;
+  res = wm.autoConnect("ESP32-CONFIG", "12345678");
+  // senha do AP é opcional, pode remover se quiser
+
+  if (!res) {
+    Serial.println("Falha ao conectar");
+    // Reinicia o ESP se não conectar
+    ESP.restart();
+  } 
+  else {
+    Serial.println("WiFi conectado com sucesso!");
+    Serial.print("IP: ");
+    Serial.println(WiFi.localIP());
+  }
 
   client.setServer(mqttServer, mqttPort);
   client.setCallback(callback);
+  conectarMQTT();
   client.publish("choppwesley/pix/acionamento", "acionado");//primeiro pedido gerado
   Serial.print("Pedido Gerado\n");
 }
@@ -46,19 +74,6 @@ void loop() {
 }
 
 // ================= FUNÇÕES =================
-
-void conectarWiFi() {
-  Serial.print("Conectando ao WiFi");
-  WiFi.begin(ssid, password);
-
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-  }
-
-  Serial.println("\nWiFi conectado com sucesso");
-}
-
 void conectarMQTT() {
   while (!client.connected()) {
     Serial.print("Conectando ao MQTT...");
