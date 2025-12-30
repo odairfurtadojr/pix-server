@@ -31,35 +31,72 @@ const VALOR_FIXO = 10.0;
 let ordemAtiva = null;
 
 // ================= MQTT =================
-const MQTT_BROKER =
-  process.env.MQTT_BROKER_URL || "mqtt://broker.hivemq.com";
-
-const MQTT_TOPICS = {
-  ACIONAMENTO: "choppwesley/pix/acionamento",
-  REEMBOLSO: "choppwesley/pix/solicitar_reembolso",
-  STATUS: "choppwesley/pix/status"
-};
+const MQTT_BROKER = "mqtt://broker.hivemq.com";
+const MQTT_STATUS_TOPIC = "choppwesley/pix/status";
+const MQTT_ACIONAMENTO_TOPIC = "choppwesley/pix/acionamento";
 
 const mqttClient = mqtt.connect(MQTT_BROKER);
 
 mqttClient.on("connect", () => {
   console.log("✅ MQTT conectado");
-
-  mqttClient.subscribe(
-    [MQTT_TOPICS.ACIONAMENTO, MQTT_TOPICS.REEMBOLSO],
-    err => {
-      if (err) {
-        console.error("❌ Erro ao assinar tópicos MQTT:", err.message);
-      } else {
-        console.log("📡 Tópicos MQTT assinados");
-      }
-    }
-  );
+  mqttClient.subscribe(MQTT_ACIONAMENTO_TOPIC);
 });
 
 mqttClient.on("error", err => {
   console.error("❌ Erro MQTT:", err.message);
 });
+
+// ================= FUNÇÃO: CRIAR LOJA =================
+async function criarLoja() {
+  const response = await axios.post(
+    `https://api.mercadopago.com/users/${MP_USER_ID}/stores`,
+    {
+      name: "Loja Teste",
+      external_id: EXTERNAL_STORE_ID,
+      location: {
+        street_number: "0123",
+        street_name: "Rua Exemplo",
+        city_name: "São José",
+        state_name: "Santa Catarina",
+        latitude: -27.577686,
+        longitude: -48.640945,
+        reference: "Perto do Mercado Pago"
+      }
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${ACCESS_TOKEN}`,
+        "Content-Type": "application/json"
+      }
+    }
+  );
+
+  console.log("✅ Loja criada");
+  return response.data;
+}
+
+// ================= FUNÇÃO: CRIAR PDV =================
+async function criarPDV() {
+  const response = await axios.post(
+    "https://api.mercadopago.com/pos",
+    {
+      name: "PDV Teste",
+      fixed_amount: true,
+      store_id: STORE_ID,
+      external_store_id: EXTERNAL_STORE_ID,
+      external_id: EXTERNAL_POS_ID
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${ACCESS_TOKEN}`,
+        "Content-Type": "application/json"
+      }
+    }
+  );
+
+  console.log("✅ PDV criado");
+  return response.data;
+}
 
 // ================= FUNÇÃO: GERAR ORDEM =================
 async function gerarOrdemPagamento() {
@@ -79,7 +116,9 @@ async function gerarOrdemPagamento() {
         }
       },
       transactions: {
-        payments: [{ amount: VALOR_FIXO.toFixed(2) }]
+        payments: [
+          { amount: VALOR_FIXO.toFixed(2) }
+        ]
       }
     },
     {
@@ -93,103 +132,30 @@ async function gerarOrdemPagamento() {
 
   ordemAtiva = response.data.id;
   console.log("🧾 Ordem criada:", ordemAtiva);
+
   return response.data;
 }
 
-// ================= FUNÇÃO: REEMBOLSAR ÚLTIMO PIX =================
-async function refundLastStaticPix() {
-  // 1️⃣ Buscar último pagamento PIX
-  const searchResponse = await axios.get(
-    "https://api.mercadopago.com/v1/payments/search",
-    {
-      headers: {
-        Authorization: `Bearer ${ACCESS_TOKEN}`
-      },
-      params: {
-        payment_method_id: "pix",
-        sort: "date_created",
-        criteria: "desc",
-        limit: 1
-      }
-    }
-  );
-
-  const results = searchResponse.data.results;
-
-  if (!results || results.length === 0) {
-    throw new Error("Nenhum pagamento PIX encontrado");
-  }
-
-  const payment = results[0];
-
-  if (payment.status !== "approved") {
-    throw new Error("Último PIX não está aprovado");
-  }
-
-  if (payment.refunds && payment.refunds.length > 0) {
-    throw new Error("PIX já possui reembolso");
-  }
-
-  if (
-    payment.point_of_interaction?.business_info?.sub_unit !== "qr"
-  ) {
-    throw new Error("Último pagamento não é PIX via QR");
-  }
-
-  // 2️⃣ Solicitar reembolso
-  const refundResponse = await axios.post(
-    `https://api.mercadopago.com/v1/payments/${payment.id}/refunds`,
-    {},
-    {
-      headers: {
-        Authorization: `Bearer ${ACCESS_TOKEN}`,
-        "Content-Type": "application/json"
-      }
-    }
-  );
-
-  return {
-    payment_id: payment.id,
-    amount: payment.transaction_amount,
-    refund: refundResponse.data
-  };
-}
-
-// ================= MQTT: HANDLER CENTRAL =================
+// ================= MQTT: TRIGGER =================
 mqttClient.on("message", async (topic, message) => {
   const payload = message.toString();
-  console.log(`📩 MQTT recebido [${topic}]: ${payload}`);
 
-  // ===== Solicitar reembolso =====
-  if (topic === MQTT_TOPICS.REEMBOLSO) {
-    try {
-      const result = await refundLastStaticPix();
-      mqttClient.publish(
-        MQTT_TOPICS.STATUS,
-        JSON.stringify({ status: "REEMBOLSO_OK", ...result })
-      );
-    } catch (err) {
-      mqttClient.publish(
-        MQTT_TOPICS.STATUS,
-        JSON.stringify({ status: "ERRO_REEMBOLSO", message: err.message })
-      );
-    }
+  if (topic !== MQTT_ACIONAMENTO_TOPIC) return;
+  if (payload !== "acionado") return;
+
+  console.log("🟢 Pedido acionado via MQTT");
+
+  if (ordemAtiva) {
+    console.log("⚠️ Já existe ordem ativa:", ordemAtiva);
+    return;
   }
 
-  // ===== Acionamento PDV =====
-  if (topic === MQTT_TOPICS.ACIONAMENTO && payload === "acionado") {
-    if (ordemAtiva) {
-      console.log("⚠️ Ordem já ativa:", ordemAtiva);
-      return;
-    }
-
-    try {
-      await gerarOrdemPagamento();
-      mqttClient.publish(MQTT_TOPICS.STATUS, "AGUARDANDO_PAGAMENTO");
-    } catch (err) {
-      console.error("❌ Erro ao gerar ordem:", err.message);
-      ordemAtiva = null;
-    }
+  try {
+    await gerarOrdemPagamento();
+    mqttClient.publish(MQTT_STATUS_TOPIC, "AGUARDANDO_PAGAMENTO");
+  } catch (err) {
+    console.error("❌ Erro ao gerar ordem:", err.response?.data || err.message);
+    ordemAtiva = null;
   }
 });
 
@@ -205,13 +171,15 @@ app.post("/webhook", (req, res) => {
     const payment = payments[0];
 
     if (action === "order.expired" || payment.status === "cancelled") {
+      console.log("⏰ Pedido expirado");
       ordemAtiva = null;
-      mqttClient.publish(MQTT_TOPICS.STATUS, "EXPIRADO");
+      mqttClient.publish(MQTT_STATUS_TOPIC, "EXPIRADO");
     }
 
     if (action === "order.processed" && payment.status === "processed") {
+      console.log("✅ Pagamento confirmado");
       ordemAtiva = null;
-      mqttClient.publish(MQTT_TOPICS.STATUS, "PAGO");
+      mqttClient.publish(MQTT_STATUS_TOPIC, "PAGO");
     }
   } catch (err) {
     console.error("❌ Erro webhook:", err.message);
@@ -219,6 +187,22 @@ app.post("/webhook", (req, res) => {
 });
 
 // ================= ROTAS AUX =================
+app.post("/criar-loja", async (_, res) => {
+  try {
+    res.json(await criarLoja());
+  } catch {
+    res.status(500).json({ error: "Erro ao criar loja" });
+  }
+});
+
+app.post("/criar-pdv", async (_, res) => {
+  try {
+    res.json(await criarPDV());
+  } catch {
+    res.status(500).json({ error: "Erro ao criar PDV" });
+  }
+});
+
 app.get("/health", (_, res) => {
   res.status(200).json({ status: "ok" });
 });
