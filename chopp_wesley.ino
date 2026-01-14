@@ -3,89 +3,119 @@
 #include <PubSubClient.h>
 
 // ================= MQTT =================
-const char* mqttServer = "broker.hivemq.com";
-const int mqttPort = 1883;
-const char* mqttTopic = "choppwesley/pix/status";
+const char* mqttServer   = "mqtt.kwanan.com";
+const int   mqttPort     = 1883;
+const char* mqttUser     = "oda_payment";
+const char* mqttPassword = "odapay@202";
+
+// Client ID único (adicionar MAC depois)
+String clientID = "ESP_WESLEY_001";
+
+// Tópicos CORRETOS
+const char* mqttTopicRequest  = "oda/payment/request/ESP_WESLEY_001";   // Publicar pedidos
+const char* mqttTopicResponse = "oda/payment/response/ESP_WESLEY_001";  // Receber confirmação
+const char* mqttTopicStatus   = "oda/payment/status/ESP_WESLEY_001";    // Receber status
 
 // ================= HARDWARE =================
-#define RELE 5
+#define RELE  5
 #define BOTAO 15
 
 WiFiClient espClient;
-PubSubClient client(espClient);
+PubSubClient mqttClient(espClient);
+
+// ================= VARIÁVEIS =================
+float amount = 10.0;
 
 // ================= PROTÓTIPOS =================
 void conectarMQTT();
 void callback(char* topic, byte* payload, unsigned int length);
-void reconnectMQTT() {
-  while (!client.connected()) {
-    Serial.print("Conectando ao MQTT...");
-    if (client.connect("ESP32-Chopp")) {
-      Serial.println(" conectado!");
-    } else {
-      Serial.print(" falhou, rc=");
-      Serial.print(client.state());
-      Serial.println(" tentando novamente em 2s");
-      delay(2000);
-    }
-  }
-}
+void enviarPedido();
 
+// ================= SETUP =================
 void setup() {
-
   Serial.begin(115200);
+
   pinMode(RELE, OUTPUT);
   digitalWrite(RELE, LOW);
-  Serial.println("\nIniciando WiFiManager...");
 
-  // Cria o objeto WiFiManager
   WiFiManager wm;
-
-  // Nome da rede AP que será criada se não conectar
-  // Ex: ESP32-CONFIG
-  bool res;
-  res = wm.autoConnect("ESP32-CONFIG", "12345678");
-  // senha do AP é opcional, pode remover se quiser
+  bool res = wm.autoConnect("ESP32-CONFIG", "12345678");
 
   if (!res) {
-    Serial.println("Falha ao conectar");
-    // Reinicia o ESP se não conectar
+    Serial.println("Falha ao conectar no WiFi");
     ESP.restart();
-  } 
-  else {
-    Serial.println("WiFi conectado com sucesso!");
-    Serial.print("IP: ");
-    Serial.println(WiFi.localIP());
   }
 
-  client.setServer(mqttServer, mqttPort);
-  client.setCallback(callback);
+  Serial.println("WiFi conectado!");
+  Serial.println(WiFi.localIP());
+
+  // Gerar Client ID único com MAC address
+  uint8_t mac[6];
+  WiFi.macAddress(mac);
+  char macStr[7];
+  sprintf(macStr, "%02X%02X%02X", mac[3], mac[4], mac[5]);
+  clientID = "ESP_WESLEY_001_" + String(macStr);
+  
+  Serial.print("Client ID: ");
+  Serial.println(clientID);
+
+  mqttClient.setServer(mqttServer, mqttPort);
+  mqttClient.setCallback(callback);
+  mqttClient.setKeepAlive(60);  // Keepalive de 60 segundos
+
   conectarMQTT();
-  client.publish("choppwesley/pix/acionamento", "acionado");//primeiro pedido gerado
-  Serial.print("Pedido Gerado\n");
+
+  // Primeiro pedido
+  enviarPedido();
 }
 
-
+// ================= LOOP =================
 void loop() {
-  if (!client.connected()) {
+  if (!mqttClient.connected()) {
     conectarMQTT();
   }
-  client.loop();
+  mqttClient.loop();
 }
 
 // ================= FUNÇÕES =================
 void conectarMQTT() {
-  while (!client.connected()) {
-    Serial.print("Conectando ao MQTT...");
-
-    if (client.connect("ESP32_PIX_01")) {
-      Serial.println(" conectado!");
-      client.subscribe(mqttTopic);
+  while (!mqttClient.connected()) {
+    Serial.print("Conectando ao MQTT... ");
+    
+    // Conectar com clean_session = false (sessão persistente)
+    if (mqttClient.connect(clientID.c_str(), mqttUser, mqttPassword, NULL, 0, false, NULL, false)) {
+      Serial.println("Conectado!");
+      
+      // Subscrever nos DOIS tópicos
+      mqttClient.subscribe(mqttTopicResponse);
+      Serial.print("Subscrito em: ");
+      Serial.println(mqttTopicResponse);
+      
+      mqttClient.subscribe(mqttTopicStatus);
+      Serial.print("Subscrito em: ");
+      Serial.println(mqttTopicStatus);
     } else {
-      Serial.print(" falhou, rc=");
-      Serial.print(client.state());
+      Serial.print("Erro: ");
+      Serial.println(mqttClient.state());
       delay(2000);
     }
+  }
+}
+
+void enviarPedido() {
+  String payload = "{\"amount\":" + String(amount, 2) + "}";
+
+  Serial.print("Publicando em ");
+  Serial.print(mqttTopicRequest);
+  Serial.print(": ");
+  Serial.println(payload);
+
+  bool success = mqttClient.publish(mqttTopicRequest, payload.c_str());
+
+  if (success) {
+    Serial.println("Solicitacao enviada!");
+  } else {
+    Serial.println("Falha ao enviar solicitacao");
   }
 }
 
@@ -96,23 +126,33 @@ void callback(char* topic, byte* payload, unsigned int length) {
     mensagem += (char)payload[i];
   }
 
-  Serial.print("Mensagem recebida: ");
+  Serial.print("Mensagem [");
+  Serial.print(topic);
+  Serial.print("]: ");
   Serial.println(mensagem);
 
-  if (mensagem == "PAGO") {
-    Serial.println("Pagamento confirmado!");
-
-    digitalWrite(RELE, HIGH); //Relé para acionamento da torneira
-    delay(5000);
-    digitalWrite(RELE, LOW);
-
-    client.publish("choppwesley/pix/acionamento", "acionado");//gerar novo pedido
-    Serial.print("Pedido Gerado\n");
+  // Processar status do pagamento (approved, pending, rejected, etc.)
+  if (String(topic) == mqttTopicStatus) {
+    if (mensagem == "approved" || mensagem == "processed") {
+      Serial.println("PAGAMENTO APROVADO!");
+      digitalWrite(RELE, HIGH);
+      delay(5000);
+      digitalWrite(RELE, LOW);
+      
+      // Próximo pedido
+      enviarPedido();
+    }
+    else if (mensagem == "rejected" || mensagem == "cancelled") {
+      Serial.println("PAGAMENTO REJEITADO");
+      delay(2000);
+      enviarPedido();
+    }
   }
-    if (mensagem == "EXPIRADO") {
-    Serial.println("Pedido Expirado!");
-    delay(200);
-    client.publish("choppwesley/pix/acionamento", "acionado");//gerar novo pedido
-    Serial.print("Pedido Gerado\n");
+  
+  // Processar resposta de criação do pedido
+  if (String(topic) == mqttTopicResponse) {
+    if (mensagem == "created") {
+      Serial.println("Pedido criado, aguardando pagamento...");
+    }
   }
 }
