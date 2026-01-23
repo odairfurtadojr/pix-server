@@ -15,14 +15,33 @@ const char* mqttTopicResponse = "oda/payment/response/ESP_WESLEY_001";
 const char* mqttTopicStatus   = "oda/payment/status/ESP_WESLEY_001";
 
 // ================= HARDWARE =================
-#define PINO_VALVULA  5     // válvula solenoide
-#define PINO_FLUXO    27    // sensor YF-S201
+#define PINO_VALVULA        5
+#define PINO_FLUXO          27
+#define PINO_LED_VERDE      18
+#define PINO_LED_VERMELHO   19
+
+// ================= FLUXO =================
+#define PULSOS_MINIMO_FLUXO 10   // filtro contra ruído do sensor
 
 // ================= CHOPP =================
 volatile unsigned long pulsos = 0;
-float mlPorPulso = 2.22;      // AJUSTAR NA CALIBRAÇÃO
-float volumeAlvo = 300.0;     // 300 ml
+volatile bool pulsoDetectado = false;
+
+float mlPorPulso = 2.22;
+float volumeAlvo = 300.0;
+
+// ================= CONTROLE =================
 bool servindo = false;
+bool pedidoAtivo = false;
+bool fluxoIniciado = false;
+
+unsigned long tempoInicioServico = 0;
+unsigned long ultimoPulso = 0;
+unsigned long ultimoMQTT = 0;
+
+const unsigned long TIMEOUT_INICIO_SERVICO = 60000; // 60s sem fluxo
+const unsigned long TIMEOUT_OCIOSIDADE     = 5000;  // 5s após fluxo iniciar
+const unsigned long INTERVALO_MQTT         = 5000;
 
 // ================= VARIÁVEIS =================
 float amount = 10.0;
@@ -32,144 +51,191 @@ PubSubClient mqttClient(espClient);
 
 // ================= PROTÓTIPOS =================
 void conectarMQTT();
-void callback(char* topic, byte* payload, unsigned int length);
 void enviarPedido();
-void servirChopp();
+void iniciarServico();
+void encerrarServico();
+void callback(char* topic, byte* payload, unsigned int length);
 void IRAM_ATTR contaPulso();
 
 // ================= SETUP =================
 void setup() {
   Serial.begin(115200);
+  delay(2000);
+
+  Serial.println("\n[BOOT] ESP iniciado");
 
   pinMode(PINO_VALVULA, OUTPUT);
+  pinMode(PINO_LED_VERDE, OUTPUT);
+  pinMode(PINO_LED_VERMELHO, OUTPUT);
+
   digitalWrite(PINO_VALVULA, LOW);
+  digitalWrite(PINO_LED_VERDE, LOW);
+  digitalWrite(PINO_LED_VERMELHO, HIGH);
 
   pinMode(PINO_FLUXO, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(PINO_FLUXO), contaPulso, FALLING);
 
-  WiFiManager wm;
-  bool res = wm.autoConnect("ESP32-CONFIG", "12345678");
+  WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);
 
-  if (!res) {
-    Serial.println("Falha ao conectar no WiFi");
+  WiFiManager wm;
+  wm.setConnectTimeout(15);
+  wm.setConfigPortalTimeout(180);
+
+  if (!wm.autoConnect("ESP32-CONFIG", "12345678")) {
+    Serial.println("[WIFI] Falha, reiniciando...");
     ESP.restart();
   }
 
-  Serial.println("WiFi conectado!");
+  Serial.print("[WIFI] Conectado: ");
   Serial.println(WiFi.localIP());
-
-  // Client ID único
-  uint8_t mac[6];
-  WiFi.macAddress(mac);
-  char macStr[7];
-  sprintf(macStr, "%02X%02X%02X", mac[3], mac[4], mac[5]);
-  clientID = "ESP_WESLEY_001_" + String(macStr);
-
-  Serial.print("Client ID: ");
-  Serial.println(clientID);
 
   mqttClient.setServer(mqttServer, mqttPort);
   mqttClient.setCallback(callback);
-  mqttClient.setKeepAlive(60);
 
+  // 🔥 Disparo inicial do MQTT (já testado)
   conectarMQTT();
-
-  enviarPedido();
 }
 
 // ================= LOOP =================
 void loop() {
-  if (!mqttClient.connected()) {
-    conectarMQTT();
-  }
   mqttClient.loop();
+
+  if (!mqttClient.connected()) {
+    if (millis() - ultimoMQTT > INTERVALO_MQTT) {
+      ultimoMQTT = millis();
+      conectarMQTT();
+    }
+  }
+
+  if (pulsoDetectado) {
+    pulsoDetectado = false;
+    ultimoPulso = millis();
+  }
+
+  // Fluxo só é considerado iniciado após pulsos reais
+  if (servindo && !fluxoIniciado && pulsos >= PULSOS_MINIMO_FLUXO) {
+    fluxoIniciado = true;
+    Serial.println("[SERVICO] Fluxo iniciado");
+  }
+
+  if (servindo) {
+    unsigned long agora = millis();
+
+    // ⏱ Timeout de 60s SEM fluxo
+    if (!fluxoIniciado && agora - tempoInicioServico >= TIMEOUT_INICIO_SERVICO) {
+      Serial.println("[SERVICO] Timeout início (sem fluxo)");
+      encerrarServico();
+    }
+
+    // ⏱ Timeout de 3s APÓS fluxo iniciar
+    if (fluxoIniciado && agora - ultimoPulso >= TIMEOUT_OCIOSIDADE) {
+      Serial.println("[SERVICO] Timeout ociosidade");
+      encerrarServico();
+    }
+
+    // 🍺 Volume alvo atingido
+    if ((pulsos * mlPorPulso) >= volumeAlvo) {
+      Serial.println("[SERVICO] Volume atingido");
+      encerrarServico();
+    }
+  }
 }
 
-// ================= FUNÇÕES =================
+// ================= MQTT =================
 void conectarMQTT() {
-  while (!mqttClient.connected()) {
-    Serial.print("Conectando ao MQTT... ");
+  Serial.print("[MQTT] Tentando conectar... ");
 
-    if (mqttClient.connect(clientID.c_str(), mqttUser, mqttPassword)) {
-      Serial.println("Conectado!");
+  if (mqttClient.connect(clientID.c_str(), mqttUser, mqttPassword)) {
+    Serial.println("OK");
 
-      mqttClient.subscribe(mqttTopicResponse);
-      mqttClient.subscribe(mqttTopicStatus);
-    } else {
-      Serial.print("Erro MQTT: ");
-      Serial.println(mqttClient.state());
-      delay(2000);
-    }
+    mqttClient.subscribe(mqttTopicResponse);
+    mqttClient.subscribe(mqttTopicStatus);
+
+    enviarPedido(); // pedido só após MQTT conectar
+  } else {
+    Serial.print("ERRO ");
+    Serial.println(mqttClient.state());
   }
 }
 
 void enviarPedido() {
+  if (pedidoAtivo) {
+    Serial.println("[MQTT] Pedido já ativo");
+    return;
+  }
+
   String payload = "{\"amount\":" + String(amount, 2) + "}";
 
-  Serial.print("Publicando pedido: ");
-  Serial.println(payload);
-
-  mqttClient.publish(mqttTopicRequest, payload.c_str());
+  if (mqttClient.publish(mqttTopicRequest, payload.c_str())) {
+    pedidoAtivo = true;
+    Serial.println("[MQTT] Pedido enviado com sucesso");
+  } else {
+    Serial.println("[MQTT] Falha ao enviar pedido");
+  }
 }
 
-// ================= CALLBACK MQTT =================
+// ================= CALLBACK =================
 void callback(char* topic, byte* payload, unsigned int length) {
-  String mensagem = "";
-
+  String msg;
   for (unsigned int i = 0; i < length; i++) {
-    mensagem += (char)payload[i];
+    msg += (char)payload[i];
   }
 
-  Serial.print("Mensagem [");
+  Serial.print("[MQTT] ");
   Serial.print(topic);
-  Serial.print("]: ");
-  Serial.println(mensagem);
+  Serial.print(" -> ");
+  Serial.println(msg);
 
-  // STATUS DO PAGAMENTO
   if (String(topic) == mqttTopicStatus) {
 
-    if (mensagem == "approved" || mensagem == "processed") {
-      Serial.println("PAGAMENTO APROVADO 🍺");
-      servirChopp();
-      enviarPedido();
+    // ✅ Pagamento aprovado
+    if (msg == "approved" || msg == "processed") {
+      iniciarServico();
     }
 
-    else if (mensagem == "rejected" || mensagem == "cancelled") {
-      Serial.println("PAGAMENTO REJEITADO ❌");
-      delay(2000);
-      enviarPedido();
-    }
-  }
+    // 🔁 Pagamento cancelado ou rejeitado → novo pedido
+    else if (msg == "cancelled" || msg == "rejected") {
+      Serial.println("[PAGAMENTO] Pedido cancelado, gerando novo");
 
-  // RESPOSTA DO PEDIDO
-  if (String(topic) == mqttTopicResponse) {
-    if (mensagem == "created") {
-      Serial.println("Pedido criado, aguardando pagamento...");
+      pedidoAtivo = false;   // libera pedido atual
+      enviarPedido();        // gera novo pedido
     }
   }
 }
 
-// ================= FUNÇÃO CHOPP =================
-void servirChopp() {
+// ================= SERVIÇO =================
+void iniciarServico() {
+  Serial.println("[SERVICO] Pagamento aprovado");
+
   pulsos = 0;
   servindo = true;
+  fluxoIniciado = false;
+  tempoInicioServico = millis();
+  ultimoPulso = millis();
 
-  Serial.println("Abrindo válvula...");
   digitalWrite(PINO_VALVULA, HIGH);
+  digitalWrite(PINO_LED_VERDE, HIGH);
+  digitalWrite(PINO_LED_VERMELHO, LOW);
+}
 
-  while ((pulsos * mlPorPulso) < volumeAlvo) {
-    delay(1);
-  }
+void encerrarServico() {
+  servindo = false;
+  pedidoAtivo = false;
 
   digitalWrite(PINO_VALVULA, LOW);
-  servindo = false;
+  digitalWrite(PINO_LED_VERDE, LOW);
+  digitalWrite(PINO_LED_VERMELHO, HIGH);
 
-  Serial.print("Chopp servido: ");
+  Serial.print("[SERVICO] Total servido: ");
   Serial.print(pulsos * mlPorPulso);
-  Serial.println(" ml 🍻");
+  Serial.println(" ml");
+
+  enviarPedido(); // libera próximo cliente
 }
 
 // ================= INTERRUPÇÃO =================
 void IRAM_ATTR contaPulso() {
   pulsos++;
+  pulsoDetectado = true;
 }
