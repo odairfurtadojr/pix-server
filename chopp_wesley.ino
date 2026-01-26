@@ -10,9 +10,10 @@ const char* mqttPassword = "odapay@202";
 
 String clientID = "ESP_WESLEY_001";
 
-const char* mqttTopicRequest  = "oda/payment/request/ESP_WESLEY_001";
-const char* mqttTopicResponse = "oda/payment/response/ESP_WESLEY_001";
-const char* mqttTopicStatus   = "oda/payment/status/ESP_WESLEY_001";
+const char* mqttTopicRequest    = "oda/payment/request/ESP_WESLEY_001";
+const char* mqttTopicResponse   = "oda/payment/response/ESP_WESLEY_001";
+const char* mqttTopicStatus     = "oda/payment/status/ESP_WESLEY_001";
+const char* mqttTopicCalibracao = "oda/payment/config/ESP_WESLEY_001/mlPorPulso"; // 🔥 NOVO
 
 // ================= HARDWARE =================
 #define PINO_VALVULA        5
@@ -21,13 +22,13 @@ const char* mqttTopicStatus   = "oda/payment/status/ESP_WESLEY_001";
 #define PINO_LED_VERMELHO   19
 
 // ================= FLUXO =================
-#define PULSOS_MINIMO_FLUXO 10   // filtro contra ruído do sensor
+#define PULSOS_MINIMO_FLUXO 10
 
 // ================= CHOPP =================
 volatile unsigned long pulsos = 0;
 volatile bool pulsoDetectado = false;
 
-float mlPorPulso = 2.22;
+float mlPorPulso = 2.22;   // 🔥 CALIBRÁVEL VIA MQTT
 float volumeAlvo = 300.0;
 
 // ================= CONTROLE =================
@@ -39,8 +40,8 @@ unsigned long tempoInicioServico = 0;
 unsigned long ultimoPulso = 0;
 unsigned long ultimoMQTT = 0;
 
-const unsigned long TIMEOUT_INICIO_SERVICO = 60000; // 60s sem fluxo
-const unsigned long TIMEOUT_OCIOSIDADE     = 5000;  // 5s após fluxo iniciar
+const unsigned long TIMEOUT_INICIO_SERVICO = 60000;
+const unsigned long TIMEOUT_OCIOSIDADE     = 5000;
 const unsigned long INTERVALO_MQTT         = 5000;
 
 // ================= VARIÁVEIS =================
@@ -63,6 +64,8 @@ void setup() {
   delay(2000);
 
   Serial.println("\n[BOOT] ESP iniciado");
+  Serial.print("[BOOT] mlPorPulso inicial: ");
+  Serial.println(mlPorPulso, 4);
 
   pinMode(PINO_VALVULA, OUTPUT);
   pinMode(PINO_LED_VERDE, OUTPUT);
@@ -93,7 +96,6 @@ void setup() {
   mqttClient.setServer(mqttServer, mqttPort);
   mqttClient.setCallback(callback);
 
-  // 🔥 Disparo inicial do MQTT (já testado)
   conectarMQTT();
 }
 
@@ -113,7 +115,6 @@ void loop() {
     ultimoPulso = millis();
   }
 
-  // Fluxo só é considerado iniciado após pulsos reais
   if (servindo && !fluxoIniciado && pulsos >= PULSOS_MINIMO_FLUXO) {
     fluxoIniciado = true;
     Serial.println("[SERVICO] Fluxo iniciado");
@@ -122,19 +123,16 @@ void loop() {
   if (servindo) {
     unsigned long agora = millis();
 
-    // ⏱ Timeout de 60s SEM fluxo
     if (!fluxoIniciado && agora - tempoInicioServico >= TIMEOUT_INICIO_SERVICO) {
       Serial.println("[SERVICO] Timeout início (sem fluxo)");
       encerrarServico();
     }
 
-    // ⏱ Timeout de 3s APÓS fluxo iniciar
     if (fluxoIniciado && agora - ultimoPulso >= TIMEOUT_OCIOSIDADE) {
       Serial.println("[SERVICO] Timeout ociosidade");
       encerrarServico();
     }
 
-    // 🍺 Volume alvo atingido
     if ((pulsos * mlPorPulso) >= volumeAlvo) {
       Serial.println("[SERVICO] Volume atingido");
       encerrarServico();
@@ -151,8 +149,9 @@ void conectarMQTT() {
 
     mqttClient.subscribe(mqttTopicResponse);
     mqttClient.subscribe(mqttTopicStatus);
+    mqttClient.subscribe(mqttTopicCalibracao); // 🔥 calibração
 
-    enviarPedido(); // pedido só após MQTT conectar
+    enviarPedido();
   } else {
     Serial.print("ERRO ");
     Serial.println(mqttClient.state());
@@ -189,17 +188,28 @@ void callback(char* topic, byte* payload, unsigned int length) {
 
   if (String(topic) == mqttTopicStatus) {
 
-    // ✅ Pagamento aprovado
     if (msg == "approved" || msg == "processed") {
       iniciarServico();
     }
-
-    // 🔁 Pagamento cancelado ou rejeitado → novo pedido
     else if (msg == "cancelled" || msg == "rejected") {
       Serial.println("[PAGAMENTO] Pedido cancelado, gerando novo");
+      pedidoAtivo = false;
+      enviarPedido();
+    }
+  }
 
-      pedidoAtivo = false;   // libera pedido atual
-      enviarPedido();        // gera novo pedido
+  // ================= CALIBRAÇÃO =================
+  if (String(topic) == mqttTopicCalibracao) {
+
+    float novoValor = msg.toFloat();
+
+    if (novoValor > 0.1 && novoValor < 20.0) {
+      mlPorPulso = novoValor;
+
+      Serial.print("[CALIBRACAO] mlPorPulso atualizado: ");
+      Serial.println(mlPorPulso, 4);
+    } else {
+      Serial.println("[CALIBRACAO] Valor inválido ignorado");
     }
   }
 }
@@ -207,6 +217,8 @@ void callback(char* topic, byte* payload, unsigned int length) {
 // ================= SERVIÇO =================
 void iniciarServico() {
   Serial.println("[SERVICO] Pagamento aprovado");
+  Serial.print("[SERVICO] mlPorPulso em uso: ");
+  Serial.println(mlPorPulso, 4);
 
   pulsos = 0;
   servindo = true;
@@ -227,11 +239,14 @@ void encerrarServico() {
   digitalWrite(PINO_LED_VERDE, LOW);
   digitalWrite(PINO_LED_VERMELHO, HIGH);
 
+  Serial.print("[SERVICO] mlPorPulso utilizado: ");
+  Serial.println(mlPorPulso, 4);
+
   Serial.print("[SERVICO] Total servido: ");
   Serial.print(pulsos * mlPorPulso);
   Serial.println(" ml");
 
-  enviarPedido(); // libera próximo cliente
+  enviarPedido();
 }
 
 // ================= INTERRUPÇÃO =================
