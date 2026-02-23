@@ -10,10 +10,10 @@ const char* mqttPassword = "odapay@202";
 
 String clientID = "ESP_WESLEY_001";
 
-const char* mqttTopicRequest    = "oda/payment/request/ESP_WESLEY_001";
-const char* mqttTopicResponse   = "oda/payment/response/ESP_WESLEY_001";
-const char* mqttTopicStatus     = "oda/payment/status/ESP_WESLEY_001";
-const char* mqttTopicCalibracao = "oda/payment/config/ESP_WESLEY_001/mlPorPulso"; // 🔥 NOVO
+String mqttTopicRequest    = String("oda/payment/request/") + clientID;
+String mqttTopicResponse   = String("oda/payment/response/") + clientID;
+String mqttTopicStatus     = String("oda/payment/status/") + clientID;
+String mqttTopicCalibracao = String("oda/payment/config/") + clientID + "/mlPorPulso";
 
 // ================= HARDWARE =================
 #define PINO_VALVULA        5
@@ -28,7 +28,7 @@ const char* mqttTopicCalibracao = "oda/payment/config/ESP_WESLEY_001/mlPorPulso"
 volatile unsigned long pulsos = 0;
 volatile bool pulsoDetectado = false;
 
-float mlPorPulso = 2.22;   // 🔥 CALIBRÁVEL VIA MQTT
+float mlPorPulso = 2.22;
 float volumeAlvo = 300.0;
 
 // ================= CONTROLE =================
@@ -45,7 +45,7 @@ const unsigned long TIMEOUT_OCIOSIDADE     = 5000;
 const unsigned long INTERVALO_MQTT         = 5000;
 
 // ================= VARIÁVEIS =================
-float amount = 10.0;
+float amount = 0.10;
 
 WiFiClient espClient;
 PubSubClient mqttClient(espClient);
@@ -147,9 +147,10 @@ void conectarMQTT() {
   if (mqttClient.connect(clientID.c_str(), mqttUser, mqttPassword)) {
     Serial.println("OK");
 
-    mqttClient.subscribe(mqttTopicResponse);
-    mqttClient.subscribe(mqttTopicStatus);
-    mqttClient.subscribe(mqttTopicCalibracao); // 🔥 calibração
+    // 🔥 CORREÇÃO AQUI
+    mqttClient.subscribe(mqttTopicResponse.c_str());
+    mqttClient.subscribe(mqttTopicStatus.c_str());
+    mqttClient.subscribe(mqttTopicCalibracao.c_str());
 
     enviarPedido();
   } else {
@@ -166,7 +167,8 @@ void enviarPedido() {
 
   String payload = "{\"amount\":" + String(amount, 2) + "}";
 
-  if (mqttClient.publish(mqttTopicRequest, payload.c_str())) {
+  // 🔥 CORREÇÃO AQUI
+  if (mqttClient.publish(mqttTopicRequest.c_str(), payload.c_str())) {
     pedidoAtivo = true;
     Serial.println("[MQTT] Pedido enviado com sucesso");
   } else {
@@ -198,7 +200,6 @@ void callback(char* topic, byte* payload, unsigned int length) {
     }
   }
 
-  // ================= CALIBRAÇÃO =================
   if (String(topic) == mqttTopicCalibracao) {
 
     float novoValor = msg.toFloat();
