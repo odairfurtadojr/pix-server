@@ -1,6 +1,7 @@
 #include <WiFi.h>
 #include <WiFiManager.h>
 #include <PubSubClient.h>
+#include <Preferences.h>
 
 // ================= MQTT =================
 const char* mqttServer   = "mqtt.kwanan.com";
@@ -28,6 +29,7 @@ String mqttTopicCalibracao = String("oda/payment/config/") + clientID + "/mlPorP
 volatile unsigned long pulsos = 0;
 volatile bool pulsoDetectado = false;
 
+Preferences preferences;
 float mlPorPulso = 2.22;
 float volumeAlvo = 300.0;
 
@@ -62,6 +64,16 @@ void IRAM_ATTR contaPulso();
 void setup() {
   Serial.begin(115200);
   delay(2000);
+
+  preferences.begin("config", false); 
+  // "config" é o nome do espaço na memória
+  // false = modo leitura e escrita
+
+  mlPorPulso = preferences.getFloat("mlPulso", 2.22);
+  // Se não existir nada salvo, usa 2.22 como padrão
+
+  Serial.print("Valor carregado da flash: ");
+  Serial.println(mlPorPulso);
 
   Serial.println("\n[BOOT] ESP iniciado");
   Serial.print("[BOOT] mlPorPulso inicial: ");
@@ -207,6 +219,8 @@ void callback(char* topic, byte* payload, unsigned int length) {
     if (novoValor > 0.1 && novoValor < 20.0) {
       mlPorPulso = novoValor;
 
+
+      preferences.putFloat("mlPulso", mlPorPulso);
       Serial.print("[CALIBRACAO] mlPorPulso atualizado: ");
       Serial.println(mlPorPulso, 4);
     } else {
