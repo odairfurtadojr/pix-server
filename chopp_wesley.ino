@@ -47,7 +47,7 @@ const unsigned long TIMEOUT_OCIOSIDADE     = 5000;
 const unsigned long INTERVALO_MQTT         = 5000;
 
 // ================= VARIÁVEIS =================
-float amount = 0.10;
+float amount = 10.00;
 
 WiFiClient espClient;
 PubSubClient mqttClient(espClient);
@@ -65,12 +65,13 @@ void setup() {
   Serial.begin(115200);
   delay(2000);
 
+  // 🔥 MELHORIA WIFI
+  WiFi.setAutoReconnect(true);
+  WiFi.persistent(true);
+
   preferences.begin("config", false); 
-  // "config" é o nome do espaço na memória
-  // false = modo leitura e escrita
 
   mlPorPulso = preferences.getFloat("mlPulso", 2.22);
-  // Se não existir nada salvo, usa 2.22 como padrão
 
   Serial.print("Valor carregado da flash: ");
   Serial.println(mlPorPulso);
@@ -108,11 +109,24 @@ void setup() {
   mqttClient.setServer(mqttServer, mqttPort);
   mqttClient.setCallback(callback);
 
+  // 🔥 MELHORIA MQTT
+  mqttClient.setKeepAlive(60);
+  mqttClient.setSocketTimeout(60);
+
   conectarMQTT();
 }
 
 // ================= LOOP =================
 void loop() {
+
+  // 🔥 GARANTE WIFI SEMPRE
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("[WIFI] Reconectando...");
+    WiFi.reconnect();
+    delay(2000);
+    return;
+  }
+
   mqttClient.loop();
 
   if (!mqttClient.connected()) {
@@ -122,44 +136,60 @@ void loop() {
     }
   }
 
-  if (pulsoDetectado) {
-    pulsoDetectado = false;
+// Detecta pulso
+if (pulsoDetectado) {
+  pulsoDetectado = false;
+
+  if (fluxoIniciado) {
     ultimoPulso = millis();
   }
+}
 
-  if (servindo && !fluxoIniciado && pulsos >= PULSOS_MINIMO_FLUXO) {
+// Detecta início real de fluxo
+if (servindo && !fluxoIniciado) {
+  if (pulsos >= PULSOS_MINIMO_FLUXO) {
     fluxoIniciado = true;
+    ultimoPulso = millis();
     Serial.println("[SERVICO] Fluxo iniciado");
   }
+}
 
-  if (servindo) {
-    unsigned long agora = millis();
+// Controle do serviço
+if (servindo) {
+  unsigned long agora = millis();
 
-    if (!fluxoIniciado && agora - tempoInicioServico >= TIMEOUT_INICIO_SERVICO) {
+  if (!fluxoIniciado) {
+    if (agora - tempoInicioServico >= TIMEOUT_INICIO_SERVICO) {
       Serial.println("[SERVICO] Timeout início (sem fluxo)");
       encerrarServico();
     }
-
-    if (fluxoIniciado && agora - ultimoPulso >= TIMEOUT_OCIOSIDADE) {
-      Serial.println("[SERVICO] Timeout ociosidade");
-      encerrarServico();
-    }
-
-    if ((pulsos * mlPorPulso) >= volumeAlvo) {
-      Serial.println("[SERVICO] Volume atingido");
-      encerrarServico();
-    }
+    return;
   }
+
+  if (agora - ultimoPulso >= TIMEOUT_OCIOSIDADE) {
+    Serial.println("[SERVICO] Timeout ociosidade");
+    encerrarServico();
+  }
+
+  if ((pulsos * mlPorPulso) >= volumeAlvo) {
+    Serial.println("[SERVICO] Volume atingido");
+    encerrarServico();
+  }
+}
+
 }
 
 // ================= MQTT =================
 void conectarMQTT() {
+
+  if (mqttClient.connected()) return;
+
   Serial.print("[MQTT] Tentando conectar... ");
 
+  // 🔥 CLIENT ID FIXO
   if (mqttClient.connect(clientID.c_str(), mqttUser, mqttPassword)) {
     Serial.println("OK");
 
-    // 🔥 CORREÇÃO AQUI
     mqttClient.subscribe(mqttTopicResponse.c_str());
     mqttClient.subscribe(mqttTopicStatus.c_str());
     mqttClient.subscribe(mqttTopicCalibracao.c_str());
@@ -179,7 +209,6 @@ void enviarPedido() {
 
   String payload = "{\"amount\":" + String(amount, 2) + "}";
 
-  // 🔥 CORREÇÃO AQUI
   if (mqttClient.publish(mqttTopicRequest.c_str(), payload.c_str())) {
     pedidoAtivo = true;
     Serial.println("[MQTT] Pedido enviado com sucesso");
@@ -219,8 +248,8 @@ void callback(char* topic, byte* payload, unsigned int length) {
     if (novoValor > 0.1 && novoValor < 20.0) {
       mlPorPulso = novoValor;
 
-
       preferences.putFloat("mlPulso", mlPorPulso);
+
       Serial.print("[CALIBRACAO] mlPorPulso atualizado: ");
       Serial.println(mlPorPulso, 4);
     } else {
