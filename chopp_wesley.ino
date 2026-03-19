@@ -23,7 +23,7 @@ String mqttTopicCalibracao = String("oda/payment/config/") + clientID + "/mlPorP
 #define PINO_LED_VERMELHO   19
 
 // ================= FLUXO =================
-#define PULSOS_MINIMO_FLUXO 10
+#define PULSOS_MINIMO_FLUXO 20
 
 // ================= CHOPP =================
 volatile unsigned long pulsos = 0;
@@ -47,7 +47,7 @@ const unsigned long TIMEOUT_OCIOSIDADE     = 5000;
 const unsigned long INTERVALO_MQTT         = 5000;
 
 // ================= VARIÁVEIS =================
-float amount = 10.00;
+float amount = 0.10;
 
 WiFiClient espClient;
 PubSubClient mqttClient(espClient);
@@ -65,20 +65,12 @@ void setup() {
   Serial.begin(115200);
   delay(2000);
 
-  // 🔥 MELHORIA WIFI
   WiFi.setAutoReconnect(true);
   WiFi.persistent(true);
 
   preferences.begin("config", false); 
 
   mlPorPulso = preferences.getFloat("mlPulso", 2.22);
-
-  Serial.print("Valor carregado da flash: ");
-  Serial.println(mlPorPulso);
-
-  Serial.println("\n[BOOT] ESP iniciado");
-  Serial.print("[BOOT] mlPorPulso inicial: ");
-  Serial.println(mlPorPulso, 4);
 
   pinMode(PINO_VALVULA, OUTPUT);
   pinMode(PINO_LED_VERDE, OUTPUT);
@@ -99,17 +91,12 @@ void setup() {
   wm.setConfigPortalTimeout(180);
 
   if (!wm.autoConnect("ESP32-CONFIG", "12345678")) {
-    Serial.println("[WIFI] Falha, reiniciando...");
     ESP.restart();
   }
-
-  Serial.print("[WIFI] Conectado: ");
-  Serial.println(WiFi.localIP());
 
   mqttClient.setServer(mqttServer, mqttPort);
   mqttClient.setCallback(callback);
 
-  // 🔥 MELHORIA MQTT
   mqttClient.setKeepAlive(60);
   mqttClient.setSocketTimeout(60);
 
@@ -119,9 +106,7 @@ void setup() {
 // ================= LOOP =================
 void loop() {
 
-  // 🔥 GARANTE WIFI SEMPRE
   if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("[WIFI] Reconectando...");
     WiFi.reconnect();
     delay(2000);
     return;
@@ -136,47 +121,40 @@ void loop() {
     }
   }
 
-// Detecta pulso
-if (pulsoDetectado) {
-  pulsoDetectado = false;
-
-  if (fluxoIniciado) {
-    ultimoPulso = millis();
+  if (pulsoDetectado) {
+    pulsoDetectado = false;
+    if (fluxoIniciado) ultimoPulso = millis();
   }
-}
 
-// Detecta início real de fluxo
-if (servindo && !fluxoIniciado) {
-  if (pulsos >= PULSOS_MINIMO_FLUXO) {
-    fluxoIniciado = true;
-    ultimoPulso = millis();
-    Serial.println("[SERVICO] Fluxo iniciado");
+  if (servindo && !fluxoIniciado) {
+    if (pulsos >= PULSOS_MINIMO_FLUXO) {
+      fluxoIniciado = true;
+      ultimoPulso = millis();
+      Serial.println("[SERVICO] Fluxo iniciado");
+    }
   }
-}
 
-// Controle do serviço
-if (servindo) {
-  unsigned long agora = millis();
+  if (servindo) {
+    unsigned long agora = millis();
 
-  if (!fluxoIniciado) {
-    if (agora - tempoInicioServico >= TIMEOUT_INICIO_SERVICO) {
-      Serial.println("[SERVICO] Timeout início (sem fluxo)");
+    if (!fluxoIniciado) {
+      if (agora - tempoInicioServico >= TIMEOUT_INICIO_SERVICO) {
+        Serial.println("[SERVICO] Timeout início (sem fluxo)");
+        encerrarServico();
+      }
+      return;
+    }
+
+    if (agora - ultimoPulso >= TIMEOUT_OCIOSIDADE) {
+      Serial.println("[SERVICO] Timeout ociosidade");
       encerrarServico();
     }
-    return;
-  }
 
-  if (agora - ultimoPulso >= TIMEOUT_OCIOSIDADE) {
-    Serial.println("[SERVICO] Timeout ociosidade");
-    encerrarServico();
+    if ((pulsos * mlPorPulso) >= volumeAlvo) {
+      Serial.println("[SERVICO] Volume atingido");
+      encerrarServico();
+    }
   }
-
-  if ((pulsos * mlPorPulso) >= volumeAlvo) {
-    Serial.println("[SERVICO] Volume atingido");
-    encerrarServico();
-  }
-}
-
 }
 
 // ================= MQTT =================
@@ -184,9 +162,8 @@ void conectarMQTT() {
 
   if (mqttClient.connected()) return;
 
-  Serial.print("[MQTT] Tentando conectar... ");
+  Serial.print("[MQTT] Conectando... ");
 
-  // 🔥 CLIENT ID FIXO
   if (mqttClient.connect(clientID.c_str(), mqttUser, mqttPassword)) {
     Serial.println("OK");
 
@@ -196,7 +173,7 @@ void conectarMQTT() {
 
     enviarPedido();
   } else {
-    Serial.print("ERRO ");
+    Serial.print("Erro: ");
     Serial.println(mqttClient.state());
   }
 }
@@ -211,9 +188,7 @@ void enviarPedido() {
 
   if (mqttClient.publish(mqttTopicRequest.c_str(), payload.c_str())) {
     pedidoAtivo = true;
-    Serial.println("[MQTT] Pedido enviado com sucesso");
-  } else {
-    Serial.println("[MQTT] Falha ao enviar pedido");
+    Serial.println("[MQTT] Pedido enviado");
   }
 }
 
@@ -231,11 +206,15 @@ void callback(char* topic, byte* payload, unsigned int length) {
 
   if (String(topic) == mqttTopicStatus) {
 
+    // ✅ PAGOU
     if (msg == "approved" || msg == "processed") {
+      pedidoAtivo = false;  // 🔥 IMPORTANTE
       iniciarServico();
     }
-    else if (msg == "cancelled" || msg == "rejected") {
-      Serial.println("[PAGAMENTO] Pedido cancelado, gerando novo");
+
+    // ✅ EXPIROU / CANCELADO
+    else if (msg == "cancelled" || msg == "rejected" || msg == "expired") {
+      Serial.println("[PAGAMENTO] Pedido expirado/cancelado, gerando novo");
       pedidoAtivo = false;
       enviarPedido();
     }
@@ -247,22 +226,17 @@ void callback(char* topic, byte* payload, unsigned int length) {
 
     if (novoValor > 0.1 && novoValor < 20.0) {
       mlPorPulso = novoValor;
-
       preferences.putFloat("mlPulso", mlPorPulso);
 
-      Serial.print("[CALIBRACAO] mlPorPulso atualizado: ");
+      Serial.print("[CALIBRACAO] Novo valor: ");
       Serial.println(mlPorPulso, 4);
-    } else {
-      Serial.println("[CALIBRACAO] Valor inválido ignorado");
     }
   }
 }
 
 // ================= SERVIÇO =================
 void iniciarServico() {
-  Serial.println("[SERVICO] Pagamento aprovado");
-  Serial.print("[SERVICO] mlPorPulso em uso: ");
-  Serial.println(mlPorPulso, 4);
+  Serial.println("[SERVICO] Iniciando");
 
   pulsos = 0;
   servindo = true;
@@ -283,14 +257,11 @@ void encerrarServico() {
   digitalWrite(PINO_LED_VERDE, LOW);
   digitalWrite(PINO_LED_VERMELHO, HIGH);
 
-  Serial.print("[SERVICO] mlPorPulso utilizado: ");
-  Serial.println(mlPorPulso, 4);
-
   Serial.print("[SERVICO] Total servido: ");
   Serial.print(pulsos * mlPorPulso);
   Serial.println(" ml");
 
-  enviarPedido();
+  enviarPedido(); // 🔥 gera novo após servir
 }
 
 // ================= INTERRUPÇÃO =================
