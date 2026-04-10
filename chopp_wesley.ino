@@ -43,7 +43,7 @@ unsigned long ultimoPulso = 0;
 unsigned long ultimoMQTT = 0;
 
 const unsigned long TIMEOUT_INICIO_SERVICO = 60000;
-const unsigned long TIMEOUT_OCIOSIDADE     = 5000;
+const unsigned long TIMEOUT_OCIOSIDADE     = 30000;
 const unsigned long INTERVALO_MQTT         = 5000;
 
 // ================= VARIÁVEIS =================
