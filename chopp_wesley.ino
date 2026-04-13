@@ -15,6 +15,8 @@ String mqttTopicRequest    = String("oda/payment/request/") + clientID;
 String mqttTopicResponse   = String("oda/payment/response/") + clientID;
 String mqttTopicStatus     = String("oda/payment/status/") + clientID;
 String mqttTopicCalibracao = String("oda/payment/config/") + clientID + "/mlPorPulso";
+String mqttTopicAmount = String("oda/payment/config/") + clientID + "/amount";
+String mqttTopicModo = String("oda/payment/config/") + clientID + "/modo";
 
 // ================= HARDWARE =================
 #define PINO_VALVULA        5
@@ -47,7 +49,9 @@ const unsigned long TIMEOUT_OCIOSIDADE     = 30000;
 const unsigned long INTERVALO_MQTT         = 5000;
 
 // ================= VARIÁVEIS =================
-float amount = 0.10;
+float amount = 0.10;// valor default inicial
+bool modoTeste = false; // default = modo venda
+bool modoVenda = true; 
 
 WiFiClient espClient;
 PubSubClient mqttClient(espClient);
@@ -57,6 +61,8 @@ void conectarMQTT();
 void enviarPedido();
 void iniciarServico();
 void encerrarServico();
+void executarModoTeste();
+
 void callback(char* topic, byte* payload, unsigned int length);
 void IRAM_ATTR contaPulso();
 
@@ -69,6 +75,10 @@ void setup() {
   WiFi.persistent(true);
 
   preferences.begin("config", false); 
+
+  amount = preferences.getFloat("amount", 0.10); // lê da flash ou usa default
+  Serial.print("Amount carregado: ");
+  Serial.println(amount);
 
   mlPorPulso = preferences.getFloat("mlPulso", 2.22);
 
@@ -101,6 +111,10 @@ void setup() {
   mqttClient.setSocketTimeout(60);
 
   conectarMQTT();
+
+  if (mqttClient.connected()) {
+  enviarPedido();
+  }
 }
 
 // ================= LOOP =================
@@ -108,52 +122,62 @@ void loop() {
 
   if (WiFi.status() != WL_CONNECTED) {
     WiFi.reconnect();
-    delay(2000);
+    delay(10);
     return;
   }
 
   mqttClient.loop();
 
   if (!mqttClient.connected()) {
-    if (millis() - ultimoMQTT > INTERVALO_MQTT) {
-      ultimoMQTT = millis();
-      conectarMQTT();
-    }
+  static unsigned long lastReconnect = 0;
+
+  if (millis() - lastReconnect > 2000) {
+    lastReconnect = millis();
+
+    Serial.println("[MQTT] Reconectando...");
+    conectarMQTT();
   }
+}
 
-  if (pulsoDetectado) {
-    pulsoDetectado = false;
-    if (fluxoIniciado) ultimoPulso = millis();
-  }
-
-  if (servindo && !fluxoIniciado) {
-    if (pulsos >= PULSOS_MINIMO_FLUXO) {
-      fluxoIniciado = true;
-      ultimoPulso = millis();
-      Serial.println("[SERVICO] Fluxo iniciado");
-    }
-  }
-
-  if (servindo) {
-    unsigned long agora = millis();
-
-    if (!fluxoIniciado) {
-      if (agora - tempoInicioServico >= TIMEOUT_INICIO_SERVICO) {
-        Serial.println("[SERVICO] Timeout início (sem fluxo)");
-        encerrarServico();
+  // ================= MODO TESTE =================
+  if (modoTeste) {
+     executarModoTeste();
+  }else{
+ 
+      if (pulsoDetectado) {
+        pulsoDetectado = false;
+        if (fluxoIniciado) ultimoPulso = millis();
       }
-      return;
-    }
 
-    if (agora - ultimoPulso >= TIMEOUT_OCIOSIDADE) {
-      Serial.println("[SERVICO] Timeout ociosidade");
-      encerrarServico();
-    }
+      if (servindo && !fluxoIniciado) {
+        if (pulsos >= PULSOS_MINIMO_FLUXO) {
+          fluxoIniciado = true;
+          ultimoPulso = millis();
+          Serial.println("[SERVICO] Fluxo iniciado");
+        }
+      }
 
-    if ((pulsos * mlPorPulso) >= volumeAlvo) {
-      Serial.println("[SERVICO] Volume atingido");
-      encerrarServico();
-    }
+      if (servindo) {
+        unsigned long agora = millis();
+
+        if (!fluxoIniciado) {
+          if (agora - tempoInicioServico >= TIMEOUT_INICIO_SERVICO) {
+            Serial.println("[SERVICO] Timeout início (sem fluxo)");
+            encerrarServico();
+          }
+          return;
+        }
+
+        if (agora - ultimoPulso >= TIMEOUT_OCIOSIDADE) {
+          Serial.println("[SERVICO] Timeout ociosidade");
+          encerrarServico();
+        }
+
+        if ((pulsos * mlPorPulso) >= volumeAlvo) {
+          Serial.println("[SERVICO] Volume atingido");
+          encerrarServico();
+        }
+      }
   }
 }
 
@@ -170,8 +194,9 @@ void conectarMQTT() {
     mqttClient.subscribe(mqttTopicResponse.c_str());
     mqttClient.subscribe(mqttTopicStatus.c_str());
     mqttClient.subscribe(mqttTopicCalibracao.c_str());
+    mqttClient.subscribe(mqttTopicAmount.c_str());
+    mqttClient.subscribe(mqttTopicModo.c_str());
 
-    enviarPedido();
   } else {
     Serial.print("Erro: ");
     Serial.println(mqttClient.state());
@@ -189,6 +214,8 @@ void enviarPedido() {
   if (mqttClient.publish(mqttTopicRequest.c_str(), payload.c_str())) {
     pedidoAtivo = true;
     Serial.println("[MQTT] Pedido enviado");
+  } else {
+    Serial.println("[MQTT] ERRO ao enviar pedido");
   }
 }
 
@@ -203,6 +230,22 @@ void callback(char* topic, byte* payload, unsigned int length) {
   Serial.print(topic);
   Serial.print(" -> ");
   Serial.println(msg);
+
+if (String(topic) == mqttTopicResponse) {
+   Serial.println("[MQTT] Response recebido");
+
+   // 🔥 NÃO mexe no pedidoAtivo aqui
+   // aqui só confirma que o pagamento foi criado
+}
+  if (String(topic) == mqttTopicAmount) {
+      
+    amount = msg.toFloat();
+    preferences.putFloat("amount", amount); // salva na flash
+    Serial.print("[MQTT] Novo amount recebido: ");
+    Serial.println(amount);
+    pedidoAtivo = false;
+    enviarPedido();
+    } 
 
   if (String(topic) == mqttTopicStatus) {
 
@@ -220,6 +263,7 @@ void callback(char* topic, byte* payload, unsigned int length) {
     }
   }
 
+
   if (String(topic) == mqttTopicCalibracao) {
 
     float novoValor = msg.toFloat();
@@ -230,6 +274,31 @@ void callback(char* topic, byte* payload, unsigned int length) {
 
       Serial.print("[CALIBRACAO] Novo valor: ");
       Serial.println(mlPorPulso, 4);
+    }
+  }
+
+
+  if (String(topic) == mqttTopicModo) {
+    Serial.print("[MODO] Recebido: ");
+    Serial.println(msg);
+
+    if (msg == "TESTE") {
+      modoTeste = true;
+      modoVenda = false;
+      Serial.println("[MODO] TESTE ativado");
+    } 
+    else if (msg == "VENDA") {
+       modoTeste = false;
+      modoVenda = true;
+
+      // 🔥 RESET GERAL
+      servindo = false;
+
+      digitalWrite(PINO_VALVULA, LOW);
+      digitalWrite(PINO_LED_VERDE, LOW);
+      digitalWrite(PINO_LED_VERMELHO, HIGH);
+
+      Serial.println("[MODO] VENDA ativado");
     }
   }
 }
@@ -262,6 +331,14 @@ void encerrarServico() {
   Serial.println(" ml");
 
   enviarPedido(); // 🔥 gera novo após servir
+}
+
+//================== MODO TESTE ==================
+
+void executarModoTeste() {
+  digitalWrite(PINO_VALVULA, HIGH);
+  digitalWrite(PINO_LED_VERDE, HIGH);
+  digitalWrite(PINO_LED_VERMELHO, LOW);
 }
 
 // ================= INTERRUPÇÃO =================
