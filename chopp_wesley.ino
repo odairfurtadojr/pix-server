@@ -17,6 +17,7 @@ String mqttTopicStatus     = String("oda/payment/status/") + clientID;
 String mqttTopicCalibracao = String("oda/payment/config/") + clientID + "/mlPorPulso";
 String mqttTopicAmount = String("oda/payment/config/") + clientID + "/amount";
 String mqttTopicModo = String("oda/payment/config/") + clientID + "/modo";
+String mqttTopicResetWiFi = String("oda/payment/config/") + clientID + "/resetWiFi";
 
 // ================= HARDWARE =================
 #define PINO_VALVULA        5
@@ -196,6 +197,7 @@ void conectarMQTT() {
     mqttClient.subscribe(mqttTopicCalibracao.c_str());
     mqttClient.subscribe(mqttTopicAmount.c_str());
     mqttClient.subscribe(mqttTopicModo.c_str());
+    mqttClient.subscribe(mqttTopicResetWiFi.c_str());
 
   } else {
     Serial.print("Erro: ");
@@ -221,6 +223,9 @@ void enviarPedido() {
 
 // ================= CALLBACK =================
 void callback(char* topic, byte* payload, unsigned int length) {
+  Serial.print("CHEGOU TOPICO: ");
+  Serial.println(topic);
+
   String msg;
   for (unsigned int i = 0; i < length; i++) {
     msg += (char)payload[i];
@@ -299,6 +304,27 @@ if (String(topic) == mqttTopicResponse) {
       digitalWrite(PINO_LED_VERMELHO, HIGH);
 
       Serial.println("[MODO] VENDA ativado");
+    }
+  }
+
+   if (strcmp(topic, mqttTopicResetWiFi.c_str()) == 0){
+
+    Serial.println("[WIFI] Reset solicitado via MQTT!");
+
+    if (msg == "reset") {
+
+      Serial.println("[WIFI] Limpando credenciais...");
+
+      WiFi.disconnect(true, true); // apaga credenciais
+      delay(1000);
+
+      // limpa também o WiFiManager
+      WiFiManager wm;
+      wm.resetSettings();
+
+      Serial.println("[WIFI] Reiniciando ESP...");
+      delay(2000);
+      ESP.restart();
     }
   }
 }
