@@ -18,6 +18,8 @@ String mqttTopicCalibracao = String("oda/payment/config/") + clientID + "/mlPorP
 String mqttTopicAmount = String("oda/payment/config/") + clientID + "/amount";
 String mqttTopicModo = String("oda/payment/config/") + clientID + "/modo";
 String mqttTopicResetWiFi = String("oda/payment/config/") + clientID + "/resetWiFi";
+String mqttTopicTotalML = String("oda/payment/total_ml/") + clientID;
+String mqttTopicResetBarril = String("oda/payment/config/") + clientID + "/reset_barril";
 
 // ================= HARDWARE =================
 #define PINO_VALVULA        5
@@ -35,16 +37,14 @@ volatile bool pulsoDetectado = false;
 Preferences preferences;
 float mlPorPulso = 2.22;
 float volumeAlvo = 300.0;
-
-// ================= CONTROLE =================
+float total_ml = 0;        // total acumulado
+float ml_copo = 0;         // ml do chopp atual
 bool servindo = false;
 bool pedidoAtivo = false;
 bool fluxoIniciado = false;
-
 unsigned long tempoInicioServico = 0;
 unsigned long ultimoPulso = 0;
 unsigned long ultimoMQTT = 0;
-
 const unsigned long TIMEOUT_INICIO_SERVICO = 60000;
 const unsigned long TIMEOUT_OCIOSIDADE     = 30000;
 const unsigned long INTERVALO_MQTT         = 5000;
@@ -63,6 +63,7 @@ void enviarPedido();
 void iniciarServico();
 void encerrarServico();
 void executarModoTeste();
+void finalizouChopp();
 
 void callback(char* topic, byte* payload, unsigned int length);
 void IRAM_ATTR contaPulso();
@@ -75,13 +76,23 @@ void setup() {
   WiFi.setAutoReconnect(true);
   WiFi.persistent(true);
 
-  preferences.begin("config", false); 
-
-  amount = preferences.getFloat("amount", 0.10); // lê da flash ou usa default
+  preferences.begin("config", false);
+  amount = preferences.getFloat("amount", 0.10);
   Serial.print("Amount carregado: ");
   Serial.println(amount);
-
   mlPorPulso = preferences.getFloat("mlPulso", 2.22);
+  Serial.print("mlPorPulso carregado: ");
+  Serial.println(mlPorPulso);
+  preferences.end();
+
+  preferences.begin("chopp", false);
+  total_ml = preferences.getFloat("total_ml", 0);
+  preferences.end();
+
+  Serial.print("Total carregado: ");
+  Serial.println(total_ml);
+
+
 
   pinMode(PINO_VALVULA, OUTPUT);
   pinMode(PINO_LED_VERDE, OUTPUT);
@@ -198,6 +209,8 @@ void conectarMQTT() {
     mqttClient.subscribe(mqttTopicAmount.c_str());
     mqttClient.subscribe(mqttTopicModo.c_str());
     mqttClient.subscribe(mqttTopicResetWiFi.c_str());
+    mqttClient.subscribe(mqttTopicResetBarril.c_str());
+    
 
   } else {
     Serial.print("Erro: ");
@@ -327,8 +340,29 @@ if (String(topic) == mqttTopicResponse) {
       ESP.restart();
     }
   }
-}
 
+  if (String(topic) == mqttTopicResetBarril) {
+
+  Serial.println("[BARRIL] Comando recebido");
+
+  if (msg == "reset_barril") {
+
+    Serial.println("[BARRIL] Zerando contador...");
+
+    total_ml = 0;
+
+    // salva na memória
+    preferences.putFloat("total_ml", total_ml);
+
+    // envia pro MQTT
+    char payload[50];
+    snprintf(payload, sizeof(payload), "%.2f", total_ml);
+    mqttClient.publish(mqttTopicTotalML.c_str(), payload);
+
+    Serial.println("[BARRIL] Barril resetado com sucesso");
+    }
+  }
+}
 // ================= SERVIÇO =================
 void iniciarServico() {
   Serial.println("[SERVICO] Iniciando");
@@ -352,11 +386,16 @@ void encerrarServico() {
   digitalWrite(PINO_LED_VERDE, LOW);
   digitalWrite(PINO_LED_VERMELHO, HIGH);
 
+  // 🔥 calcula o copo aqui (DO JEITO CERTO)
+  ml_copo = pulsos * mlPorPulso;
+
   Serial.print("[SERVICO] Total servido: ");
-  Serial.print(pulsos * mlPorPulso);
+  Serial.print(ml_copo);
   Serial.println(" ml");
 
-  enviarPedido(); // 🔥 gera novo após servir
+  // 🔥 CHAMA AQUI (isso estava faltando)
+  finalizouChopp();
+  enviarPedido();
 }
 
 //================== MODO TESTE ==================
@@ -366,6 +405,38 @@ void executarModoTeste() {
   digitalWrite(PINO_LED_VERDE, HIGH);
   digitalWrite(PINO_LED_VERMELHO, LOW);
 }
+
+void finalizouChopp() {
+
+  Serial.println(">>> FINALIZOU CHOPP <<<");
+
+  // Atualiza total
+  total_ml += ml_copo;
+
+  char payload[50];
+  snprintf(payload, sizeof(payload), "%.2f", total_ml);
+
+  // Garante conexão
+  if (!mqttClient.connected()) {
+    Serial.println("[MQTT] Reconectando...");
+    conectarMQTT();
+  }
+
+  // Processa fila MQTT
+  mqttClient.loop();
+
+  // Envia
+  bool ok = mqttClient.publish(mqttTopicTotalML.c_str(), payload, true);
+
+  Serial.print("[MQTT] total_ml: ");
+  Serial.println(ok ? "ENVIADO" : "FALHOU");
+
+  // 🔥 Delay aqui dentro (como você pediu)
+  delay(50);
+
+  // Mantém MQTT vivo durante o delay (melhorado)
+  mqttClient.loop();
+}  
 
 // ================= INTERRUPÇÃO =================
 void IRAM_ATTR contaPulso() {
