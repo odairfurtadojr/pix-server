@@ -34,7 +34,8 @@ String mqttTopicResetBarril = String("oda/payment/config/") + clientID + "/reset
 volatile unsigned long pulsos = 0;
 volatile bool pulsoDetectado = false;
 
-Preferences preferences;
+Preferences prefConfig;
+Preferences prefChopp;
 float mlPorPulso = 2.22;
 float volumeAlvo = 300.0;
 float total_ml = 0;        // total acumulado
@@ -48,6 +49,9 @@ unsigned long ultimoMQTT = 0;
 const unsigned long TIMEOUT_INICIO_SERVICO = 60000;
 const unsigned long TIMEOUT_OCIOSIDADE     = 30000;
 const unsigned long INTERVALO_MQTT         = 5000;
+unsigned long ultimoEncerramento = 0;
+const unsigned long DELAY_NOVO_PEDIDO = 2000;
+bool precisaNovoPedido = false;
 
 // ================= VARIÁVEIS =================
 float amount = 0.10;// valor default inicial
@@ -76,22 +80,14 @@ void setup() {
   WiFi.setAutoReconnect(true);
   WiFi.persistent(true);
 
-  preferences.begin("config", false);
-  amount = preferences.getFloat("amount", 0.10);
-  Serial.print("Amount carregado: ");
-  Serial.println(amount);
-  mlPorPulso = preferences.getFloat("mlPulso", 2.22);
-  Serial.print("mlPorPulso carregado: ");
-  Serial.println(mlPorPulso);
-  preferences.end();
+  prefConfig.begin("config", true);
+  amount = prefConfig.getFloat("amount", 0.10);
+  mlPorPulso = prefConfig.getFloat("mlPulso", 2.22);
+  prefConfig.end();
 
-  preferences.begin("chopp", false);
-  total_ml = preferences.getFloat("total_ml", 0);
-  preferences.end();
-
-  Serial.print("Total carregado: ");
-  Serial.println(total_ml);
-
+  prefChopp.begin("chopp", true);
+  total_ml = prefChopp.getFloat("total_ml", 0);
+  prefChopp.end();
 
 
   pinMode(PINO_VALVULA, OUTPUT);
@@ -151,6 +147,12 @@ void loop() {
   }
 }
 
+  if (precisaNovoPedido && millis() - ultimoEncerramento > DELAY_NOVO_PEDIDO) {
+    if (!pedidoAtivo) {
+      precisaNovoPedido = false;
+      enviarPedido();
+    }
+  }
   // ================= MODO TESTE =================
   if (modoTeste) {
      executarModoTeste();
@@ -257,27 +259,36 @@ if (String(topic) == mqttTopicResponse) {
 }
   if (String(topic) == mqttTopicAmount) {
       
-    amount = msg.toFloat();
-    preferences.putFloat("amount", amount); // salva na flash
+    prefConfig.begin("config", false);
+    prefConfig.putFloat("amount", amount);
+    prefConfig.end();
+
+    prefConfig.begin("config", true);
+    float teste = prefConfig.getFloat("amount", -1);
+    prefConfig.end();
+
+    Serial.print("[DEBUG] LIDO DA FLASH: ");
+    Serial.println(teste, 6);
     Serial.print("[MQTT] Novo amount recebido: ");
     Serial.println(amount);
     pedidoAtivo = false;
-    enviarPedido();
-    } 
+    ultimoEncerramento = millis();
+    precisaNovoPedido = true;
+  } 
 
   if (String(topic) == mqttTopicStatus) {
 
     // ✅ PAGOU
-    if (msg == "approved" || msg == "processed") {
-      pedidoAtivo = false;  // 🔥 IMPORTANTE
+    if ((msg == "approved" )|| (msg == "processed")) {
+      pedidoAtivo = false;
       iniciarServico();
     }
 
     // ✅ EXPIROU / CANCELADO
     else if (msg == "cancelled" || msg == "rejected" || msg == "expired") {
-      Serial.println("[PAGAMENTO] Pedido expirado/cancelado, gerando novo");
       pedidoAtivo = false;
-      enviarPedido();
+      ultimoEncerramento = millis();
+      precisaNovoPedido = true;
     }
   }
 
@@ -288,7 +299,7 @@ if (String(topic) == mqttTopicResponse) {
 
     if (novoValor > 0.1 && novoValor < 20.0) {
       mlPorPulso = novoValor;
-      preferences.putFloat("mlPulso", mlPorPulso);
+      prefChopp.putFloat("mlPulso", mlPorPulso);
 
       Serial.print("[CALIBRACAO] Novo valor: ");
       Serial.println(mlPorPulso, 4);
@@ -352,7 +363,7 @@ if (String(topic) == mqttTopicResponse) {
     total_ml = 0;
 
     // salva na memória
-    preferences.putFloat("total_ml", total_ml);
+    prefChopp.putFloat("total_ml", total_ml);
 
     // envia pro MQTT
     char payload[50];
@@ -386,7 +397,16 @@ void encerrarServico() {
   digitalWrite(PINO_LED_VERDE, LOW);
   digitalWrite(PINO_LED_VERMELHO, HIGH);
 
+
   // 🔥 calcula o copo aqui (DO JEITO CERTO)
+  if (pulsos < PULSOS_MINIMO_FLUXO) {
+    Serial.println("[SERVICO] Pago mas não servido");
+
+    ultimoEncerramento = millis();
+    precisaNovoPedido = true;
+
+    return;
+}
   ml_copo = pulsos * mlPorPulso;
 
   Serial.print("[SERVICO] Total servido: ");
@@ -395,7 +415,8 @@ void encerrarServico() {
 
   // 🔥 CHAMA AQUI (isso estava faltando)
   finalizouChopp();
-  enviarPedido();
+  ultimoEncerramento = millis();
+  precisaNovoPedido = true;
 }
 
 //================== MODO TESTE ==================
@@ -409,6 +430,7 @@ void executarModoTeste() {
 void finalizouChopp() {
 
   Serial.println(">>> FINALIZOU CHOPP <<<");
+  
 
   // Atualiza total
   total_ml += ml_copo;
@@ -430,9 +452,6 @@ void finalizouChopp() {
 
   Serial.print("[MQTT] total_ml: ");
   Serial.println(ok ? "ENVIADO" : "FALHOU");
-
-  // 🔥 Delay aqui dentro (como você pediu)
-  delay(50);
 
   // Mantém MQTT vivo durante o delay (melhorado)
   mqttClient.loop();
