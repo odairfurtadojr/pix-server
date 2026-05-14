@@ -112,6 +112,7 @@ void setup() {
     ESP.restart();
   }
 
+
   mqttClient.setServer(mqttServer, mqttPort);
   mqttClient.setCallback(callback);
 
