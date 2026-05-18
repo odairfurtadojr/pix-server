@@ -258,24 +258,34 @@ if (String(topic) == mqttTopicResponse) {
    // 🔥 NÃO mexe no pedidoAtivo aqui
    // aqui só confirma que o pagamento foi criado
 }
-  if (String(topic) == mqttTopicAmount) {
-      
-    prefConfig.begin("config", false);
-    prefConfig.putFloat("amount", amount);
-    prefConfig.end();
+if (String(topic) == mqttTopicAmount) {
 
-    prefConfig.begin("config", true);
-    float teste = prefConfig.getFloat("amount", -1);
-    prefConfig.end();
+    float novoAmount = msg.toFloat();
 
-    Serial.print("[DEBUG] LIDO DA FLASH: ");
-    Serial.println(teste, 6);
-    Serial.print("[MQTT] Novo amount recebido: ");
-    Serial.println(amount);
-    pedidoAtivo = false;
-    ultimoEncerramento = millis();
-    precisaNovoPedido = true;
-  } 
+    if (novoAmount > 0) {
+
+      amount = novoAmount;
+
+      prefConfig.begin("config", false);
+      prefConfig.putFloat("amount", amount);
+      prefConfig.end();
+
+      // leitura de conferência
+      prefConfig.begin("config", true);
+      float teste = prefConfig.getFloat("amount", -1);
+      prefConfig.end();
+
+      Serial.print("[DEBUG] LIDO DA FLASH: ");
+      Serial.println(teste, 6);
+
+      Serial.print("[MQTT] Novo amount recebido: ");
+      Serial.println(amount, 2);
+
+      pedidoAtivo = false;
+      ultimoEncerramento = millis();
+      precisaNovoPedido = true;
+    }
+}
 
   if (String(topic) == mqttTopicStatus) {
 
@@ -300,7 +310,9 @@ if (String(topic) == mqttTopicResponse) {
 
     if (novoValor > 0.1 && novoValor < 20.0) {
       mlPorPulso = novoValor;
-      prefChopp.putFloat("mlPulso", mlPorPulso);
+      prefConfig.begin("config", false);
+      prefConfig.putFloat("mlPulso", mlPorPulso);
+      prefConfig.end();
 
       Serial.print("[CALIBRACAO] Novo valor: ");
       Serial.println(mlPorPulso, 4);
@@ -363,17 +375,27 @@ if (String(topic) == mqttTopicResponse) {
 
     total_ml = 0;
 
-    // salva na memória
+    // salva corretamente na flash
+    prefChopp.begin("chopp", false);
     prefChopp.putFloat("total_ml", total_ml);
+    prefChopp.end();
 
-    // envia pro MQTT
+    // publica MQTT
     char payload[50];
     snprintf(payload, sizeof(payload), "%.2f", total_ml);
-    mqttClient.publish(mqttTopicTotalML.c_str(), payload);
+
+    bool ok = mqttClient.publish(
+      mqttTopicTotalML.c_str(),
+      payload,
+      true
+    );
+
+    Serial.print("[MQTT] Reset barril -> ");
+    Serial.println(ok ? "ENVIADO" : "FALHOU");
 
     Serial.println("[BARRIL] Barril resetado com sucesso");
-    }
   }
+}
 }
 // ================= SERVIÇO =================
 void iniciarServico() {
@@ -435,6 +457,9 @@ void finalizouChopp() {
 
   // Atualiza total
   total_ml += ml_copo;
+  prefChopp.begin("chopp", false);
+  prefChopp.putFloat("total_ml", total_ml);
+  prefChopp.end();
 
   char payload[50];
   snprintf(payload, sizeof(payload), "%.2f", total_ml);
