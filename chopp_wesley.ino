@@ -44,6 +44,7 @@ float total_ml = 0;
 float ml_copo = 0;
 bool servindo = false;
 bool pedidoAtivo = false;
+bool pedidoConfirmado = false; // true após receber "created"; suspende o timeout local
 bool fluxoIniciado = false;
 unsigned long tempoInicioServico = 0;
 unsigned long ultimoPulso = 0;
@@ -182,7 +183,8 @@ void loop() {
   publicarTotalMLPendente();
 
   // ================= FIX BUG #1: timeout do pedido sem resposta =================
-  if (pedidoAtivo && !servindo && millis() - tempoPedido > TIMEOUT_PEDIDO) {
+  // Timeout só se aplica antes de receber "created"; após isso o MP gerencia a expiração.
+  if (pedidoAtivo && !servindo && !pedidoConfirmado && millis() - tempoPedido > TIMEOUT_PEDIDO) {
     Serial.println("[PEDIDO] Timeout — sem resposta do servidor. Reenviando.");
     pedidoAtivo = false;
     precisaNovoPedido = true;
@@ -327,11 +329,11 @@ void callback(char* topic, byte* payload, unsigned int length) {
   if (String(topic) == mqttTopicResponse) {
     if (msg == "created") {
       pedidoAtivo = true;
+      pedidoConfirmado = true; // suspende timeout; MP notificará expiração via status
       precisaNovoPedido = false;
-      // FIX BUG #1: renova o timestamp ao receber confirmação "created"
-      tempoPedido = millis();
     } else if (msg == "error") {
       pedidoAtivo = false;
+      pedidoConfirmado = false;
       precisaNovoPedido = true;
     }
   }
@@ -366,9 +368,11 @@ void callback(char* topic, byte* payload, unsigned int length) {
   if (String(topic) == mqttTopicStatus) {
     if (msg == "approved" || msg == "processed") {
       pedidoAtivo = false;
+      pedidoConfirmado = false;
       iniciarServico();
     } else if (msg == "cancelled" || msg == "rejected" || msg == "expired") {
       pedidoAtivo = false;
+      pedidoConfirmado = false;
       ultimoEncerramento = millis();
       precisaNovoPedido = true;
     } else {
@@ -482,6 +486,7 @@ void encerrarServico(const char* motivo) {
 
   servindo = false;    // zeramos ANTES de qualquer outra operação
   pedidoAtivo = false;
+  pedidoConfirmado = false;
 
   digitalWrite(PINO_VALVULA,      LOW);
   digitalWrite(PINO_LED_VERDE,    LOW);
